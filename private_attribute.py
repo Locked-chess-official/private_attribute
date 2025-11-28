@@ -1,3 +1,22 @@
+"""
+A module that provides a metaclass for creating classes with private attributes.
+Private attributes are defined in the `__private_attrs__` sequence and are only
+You can use the `PrivateAttrBase` metaclass to create classes with private attributes.
+The attributes which are private are not on the instance's `__dict__` and cannot be accessed outside
+but in the classmethods it is reachable.
+Usage example:
+```python
+class MyClass(PrivateAttrBase):
+    __private_attrs__ = ('private_attr1',)
+    def __init__(self):
+        self.private_attr1 = 1
+
+    @property
+    def public_attr1(self):
+        return self.private_attr1
+```
+"""
+
 import random
 import hashlib
 import inspect
