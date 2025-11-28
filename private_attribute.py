@@ -232,11 +232,13 @@ class PrivateAttrType(type):
         return type_instance
 
     def __getattribute__(cls, attr):
-        if hasattr(cls, "__private_attrs__") and attr in type.__getattribute__(cls, "__private_attrs__"):
+        if attr == "__private_attrs__":
+            return super().__getattribute__(attr)
+        if hasattr(cls, "__private_attrs__") and attr in super().__getattribute__("__private_attrs__"):
             raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                  name=attr,
                                  obj=cls)
-        return type.__getattribute__(cls, attr)
+        return super().__getattribute__(attr)
 
     def __getattr__(cls, attr):
         if hasattr(cls, '__private_attrs__') and attr in cls.__private_attrs__:
