@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"] 
+build-backend = "hatchling.build"
+
+[project]
+name = "private_attribute"
+version = "1.0.0"
+description = "Private attribute decorator for Python classes"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    { name = "Locked-chess-official", email = "13140752715@163.com" }
+]

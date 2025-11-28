@@ -1,0 +1,41 @@
+# Private Attribute
+
+## Introduction
+
+This package provide a way to create the private attribute like "C++" does.
+
+## Usage
+
+This is a simple usage about the module:
+
+```python
+from private_attribute import PrivateAttrBase
+
+class MyClass(PrivateAttrBase):
+    __private_attrs__ = ['a', 'b', 'c']
+    def __init__(self):
+        self.a = 1
+        self.b = 2
+        self.c = 3
+
+    def public_way(self):
+        print(self.a, self.b, self.c)
+
+obj = MyClass()
+obj.public_way()  # (1, 2, 3)
+
+print(hasattr(obj, 'a'))  # False
+print(hasattr(obj, 'b'))  # False
+print(hasattr(obj, 'c'))  # False
+```
+
+## Notes
+
+- All of the private attributes class must contain the `__private_attrs__` attribute.
+- The `__private_attrs__` attribute must be a sequence of strings.
+- You cannot define the name which in `__slots__` to `__private_attrs__`.
+- When you define `__slots__` and `__private_attrs__` in one class, the attributes in `__private_attrs__` can also be defined in the methods, even though they are not in `__slots__`.
+
+## License
+
+MIT
