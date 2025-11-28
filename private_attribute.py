@@ -231,6 +231,13 @@ class PrivateAttrType(type):
             type_attr_dict[id(type_instance)][new_attr] = i[1]
         return type_instance
 
+    def __getattribute__(cls, attr):
+        if hasattr(cls, "__private_attrs__") and attr in type.__getattribute__(cls, "__private_attrs__"):
+            raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
+                                 name=attr,
+                                 obj=cls)
+        return type.__getattribute__(cls, attr)
+
     def __getattr__(cls, attr):
         if hasattr(cls, '__private_attrs__') and attr in cls.__private_attrs__:
             frame = inspect.currentframe()
