@@ -72,6 +72,13 @@ class PrivateAttrType(type):
         private_attr_list = attrs.get('__private_attrs__', None)
         if not isinstance(private_attr_list, collections.abc.Sequence) or isinstance(private_attr_list, (str, bytes)):
             raise TypeError("'__private_attrs__' must be a sequence of the string")
+        change = False
+        for i in bases:
+            if isinstance(i, cls):
+                private_attr_list = private_attr_list + i.__private_attrs__
+                change = True
+        if change:
+            attrs["__private_attrs__"] = tuple(set(private_attr_list))
         if "__private_attrs__" in private_attr_list:
             raise TypeError("'__private_attrs__' cannot contain '__private_attrs__' itself")
         need_update = []
@@ -291,6 +298,12 @@ class PrivateAttrBase(metaclass=PrivateAttrType):
     __private_attrs__: list[str] | tuple[str] = ()
     __slots__ = ()
 
+    def __getattribute__(self, name: str) -> Any:
+        if name in type(self).__private_attrs__:
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'",
+                                 name=name,
+                                 obj=self)
+        return super().__getattribute__(name)
 
 if __name__ == "__main__":
     class MyClass(PrivateAttrBase):

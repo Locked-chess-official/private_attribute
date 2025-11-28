@@ -1,4 +1,5 @@
 from typing import Protocol, Any, runtime_checkable
+import collections
 
 
 @runtime_checkable
@@ -6,7 +7,6 @@ class PrivateAttrMapping(Protocol):
     """Mapping which must contain `__private_attrs__`, but allows any other keys."""
     __private_attrs__: list[str]
 
-    # 允许其它任意键
     def __getitem__(self, key: str) -> Any: ...
     def __iter__(self) -> Any: ...
     def __len__(self) -> int: ...
@@ -19,10 +19,13 @@ class PrivateAttrType(type):
         cls,
         name: str,
         bases: tuple[type, ...],
-        attrs: PrivateAttrMapping,   # ✨ Protocol，而不是 TypedDict
+        attrs: PrivateAttrMapping,
     ):
         return super().__new__(cls, name, bases, dict(attrs))
 
+    def __init__(cls):
+        cls.__private_attrs__: collections.abc.Sequence[str]
+
 
 class PrivateAttrBase(metaclass=PrivateAttrType):
-    __private_attrs__: list[str] = []
+    __private_attrs__: collections.abc.Sequence[str] = []
