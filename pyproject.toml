@@ -11,3 +11,6 @@ license = {text = "MIT"}
 authors = [
     { name = "Locked-chess-official", email = "13140752715@163.com" }
 ]
+
+[project.urls]
+homepage = "https://github.com/Locked-chess-official/private-attribute"
