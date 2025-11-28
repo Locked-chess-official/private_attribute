@@ -134,9 +134,16 @@ class PrivateAttrType(type):
                         try:
                             return obj_attr_dict[id(self)][private_attr_name]
                         except KeyError:
-                            raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
-                                                 name=attr,
-                                                 obj=self) from None
+                            try:
+                                if cls._type_attr_dict.get(id(type_instance), None) is not None:
+                                    if hasattr(cls._type_attr_dict[id(type_instance)][private_attr_name], "__get__"):
+                                        return cls._type_attr_dict[id(type_instance)][private_attr_name].__get__(self, type_instance)
+                                    else:
+                                        return cls._type_attr_dict[id(type_instance)][private_attr_name]
+                            except:
+                                raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
+                                                    name=attr,
+                                                    obj=self) from None
             if original_getattr:
                 return original_getattr(self, attr)
             for all_subtype in type_instance.__mro__[1:]:
