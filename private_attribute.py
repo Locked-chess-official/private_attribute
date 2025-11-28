@@ -255,30 +255,24 @@ class PrivateAttrType(type):
         attrs['__delattr__'] = __delattr__
         attrs["__del__"] = __del__
         type_instance = super().__new__(cls, name, bases, attrs)
-        type_attr_dict[id(type_instance)] = {}
+        type_attr_dict[id(type_instance)] = {_generate_private_attr_name(id(type_instance), "__private_attrs__"): tuple(private_attr_list)}
         for i in need_update:
             new_attr = _generate_private_attr_name(id(type_instance), i[0])
             type_attr_dict[id(type_instance)][new_attr] = i[1]
         return type_instance
 
     def __getattribute__(cls, attr):
-        if attr == "__private_attrs__":
-            return super().__getattribute__(attr)
-        if hasattr(cls, "__private_attrs__") and attr in super().__getattribute__("__private_attrs__"):
-            raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
-                                 name=attr,
-                                 obj=cls)
+        if attr in PrivateAttrType._type_attr_dict[id(cls)][_generate_private_attr_name(id(cls), "__private_attrs__")]:
+            raise AttributeError()
         return super().__getattribute__(attr)
 
     def __getattr__(cls, attr):
-        if hasattr(cls, '__private_attrs__') and attr in cls.__private_attrs__:
+        if attr in PrivateAttrType._type_attr_dict[id(cls)][_generate_private_attr_name(id(cls), "__private_attrs__")]:
             frame = inspect.currentframe()
             if not frame or not frame.f_back or frame.f_back.f_code.co_name == "<module>":
                 raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                      name=attr,
                                      obj=cls)
-            if id(cls) not in PrivateAttrType._type_attr_dict:
-                PrivateAttrType._type_attr_dict[id(cls)] = {}
             frame = frame.f_back
             caller_locals = frame.f_locals
             caller_cls: type|None = caller_locals.get("cls", None)
@@ -295,14 +289,12 @@ class PrivateAttrType(type):
                              obj=cls)
 
     def __setattr__(cls, attr, value):
-        if hasattr(cls, '__private_attrs__') and attr in cls.__private_attrs__:
+        if attr in PrivateAttrType._type_attr_dict[id(cls)][_generate_private_attr_name(id(cls), "__private_attrs__")]:
             frame = inspect.currentframe()
             if not frame or not frame.f_back or frame.f_back.f_code.co_name == "<module>":
                 raise AttributeError(f"cannot set private attribute '{attr}' to class '{cls.__name__}'",
                                      name=attr,
                                      obj=cls)
-            if id(cls) not in PrivateAttrType._type_attr_dict:
-                PrivateAttrType._type_attr_dict[id(cls)] = {}
             frame = frame.f_back
             caller_locals = frame.f_locals
             caller_cls: type|None = caller_locals.get("cls", None)
@@ -317,14 +309,12 @@ class PrivateAttrType(type):
             type.__setattr__(cls, attr, value)
 
     def __delattr__(cls, attr):
-        if hasattr(cls, '__private_attrs__') and attr in cls.__private_attrs__:
+        if attr in PrivateAttrType._type_attr_dict[id(cls)][_generate_private_attr_name(id(cls), "__private_attrs__")]:
             frame = inspect.currentframe()
             if not frame or not frame.f_back or frame.f_back.f_code.co_name == "<module>":
                 raise AttributeError(f"cannot delete private attribute '{attr}' on class '{cls.__name__}'",
                                      name=attr,
                                      obj=cls)
-            if id(cls) not in PrivateAttrType._type_attr_dict:
-                PrivateAttrType._type_attr_dict[id(cls)] = {}
             frame = frame.f_back
             caller_locals = frame.f_locals
             caller_cls: type|None = caller_locals.get("cls", None)
@@ -347,6 +337,12 @@ class PrivateAttrType(type):
         _clear_obj(id(cls))
         if id(cls) in PrivateAttrType._type_attr_dict:
             del PrivateAttrType._type_attr_dict[id(cls)]
+
+    def __getstate__(cls):
+        raise TypeError("Cannot pickle PrivateAttrType classes")
+
+    def __setstate__(cls, state):
+        raise TypeError("Cannot unpickle PrivateAttrType classes")
 
 
 class PrivateAttrBase(metaclass=PrivateAttrType):
