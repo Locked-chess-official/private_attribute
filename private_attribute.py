@@ -156,6 +156,8 @@ class PrivateAttrType(type):
                             try:
                                 if cls._type_attr_dict.get(id(type_instance), None) is not None:
                                     attribute = cls._type_attr_dict[id(type_instance)][private_attr_name]
+                                else:
+                                    raise KeyError(id(type_instance))
                             except KeyError:
                                 raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
                                                     name=attr,
