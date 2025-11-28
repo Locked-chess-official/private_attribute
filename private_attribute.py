@@ -75,7 +75,7 @@ class PrivateAttrType(type):
         change = False
         for i in bases:
             if isinstance(i, cls):
-                private_attr_list = private_attr_list + i.__private_attrs__
+                private_attr_list = list(private_attr_list) + list(i.__private_attrs__)
                 change = True
         if change:
             attrs["__private_attrs__"] = tuple(set(private_attr_list))
