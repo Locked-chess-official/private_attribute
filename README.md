@@ -35,6 +35,7 @@ print(hasattr(obj, 'c'))  # False
 - The `__private_attrs__` attribute must be a sequence of strings.
 - You cannot define the name which in `__slots__` to `__private_attrs__`.
 - When you define `__slots__` and `__private_attrs__` in one class, the attributes in `__private_attrs__` can also be defined in the methods, even though they are not in `__slots__`.
+- All of the object that is the instance of the class "PrivateAttrBase" or its subclass are default to be unable to be pickled.
 
 ## License
 

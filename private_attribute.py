@@ -254,6 +254,16 @@ class PrivateAttrType(type):
         attrs['__setattr__'] = __setattr__
         attrs['__delattr__'] = __delattr__
         attrs["__del__"] = __del__
+
+        def __getstate__(self):
+            raise TypeError(f"Cannot pickle '{type_instance.__name__}' objects")
+        def __setstate__(self, state):
+            raise TypeError(f"Cannot unpickle '{type_instance.__name__}' objects")
+
+        if not attrs.get("__getstate__", None):
+            attrs["__getstate__"] = __getstate__
+        if not attrs.get("__setstate__", None):
+            attrs["__setstate__"] = __setstate__
         type_instance = super().__new__(cls, name, bases, attrs)
         type_attr_dict[id(type_instance)] = {_generate_private_attr_name(id(type_instance), "__private_attrs__"): tuple(private_attr_list)}
         for i in need_update:
