@@ -91,12 +91,27 @@ class PrivateAttrType(type):
                 original_value = attrs[i]
                 del attrs[i]
                 need_update.append((i, original_value))
+        original_getattribute = attrs.get("__getattribute__", None)
         original_getattr = attrs.get("__getattr__", None)
         original_setattr = attrs.get("__setattr__", None)
         original_delattr = attrs.get("__delattr__", None)
         original_del = attrs.get("__del__", None)
         obj_attr_dict = {}
         type_attr_dict = cls._type_attr_dict
+
+        def __getattribute__(self, attr):
+            if attr in private_attr_list:
+                raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
+                                     name=attr,
+                                     obj=self)
+            if original_getattribute:
+                return original_getattribute(self, attr)
+            for all_subtype in type_instance.__mro__[1:]:
+                if hasattr(all_subtype, "__getattribute__"):
+                    return all_subtype.__getattribute__(self, attr)
+            raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
+                                 name=attr,
+                                 obj=self)
 
         def __getattr__(self, attr):
             if attr in private_attr_list:
@@ -204,6 +219,7 @@ class PrivateAttrType(type):
                         all_subtype.__del__(self)
                         break
 
+        attrs['__getattribute__'] = __getattribute__
         attrs['__getattr__'] = __getattr__
         attrs['__setattr__'] = __setattr__
         attrs['__delattr__'] = __delattr__
@@ -298,12 +314,6 @@ class PrivateAttrBase(metaclass=PrivateAttrType):
     __private_attrs__: list[str] | tuple[str] = ()
     __slots__ = ()
 
-    def __getattribute__(self, name: str) -> Any:
-        if name in type(self).__private_attrs__:
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'",
-                                 name=name,
-                                 obj=self)
-        return super().__getattribute__(name)
 
 if __name__ == "__main__":
     class MyClass(PrivateAttrBase):
