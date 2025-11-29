@@ -185,7 +185,7 @@ class PrivateAttrType(type):
                 return False
             if frame.f_code.co_name == "<module>":
                 return False
-            code_list = list(get_all_code_objects())
+            code_list = list(type_allowed_code[id(type_instance)])
             if frame.f_code in code_list:
                 return True
             return _climb_to_allowed_code(frame, code_list)
@@ -236,7 +236,11 @@ class PrivateAttrType(type):
                                                     obj=self) from None
                             else:
                                 if hasattr(attribute, "__get__"):
-                                    return attribute.__get__(self, type_instance)
+                                    result = attribute.__get__(self, type_instance)
+                                    if hasattr(result, "__code__"):
+                                        if result.__code__ not in type_allowed_code[id(type_instance)]:
+                                            type_allowed_code[id(type_instance)] += (result.__code__,)
+                                    return result
                                 else:
                                     return attribute
             if original_getattr:
@@ -381,11 +385,20 @@ class PrivateAttrType(type):
             if caller_cls is not None and issubclass(caller_cls, cls):
                 private_attr_name = _generate_private_attr_name(id(cls), attr)
                 try:
-                    return PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
+                    result = PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
                 except KeyError:
                     raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                          name=attr,
                                          obj=cls) from None
+                else:
+                    if hasattr(result, "__get__"):
+                        res = result.__get__(None, cls)
+                        if hasattr(res, "__code__"):
+                            if res.__code__ not in PrivateAttrType._type_allowed_code[id(cls)]:
+                                PrivateAttrType._type_allowed_code[id(cls)] += (res.__code__,)
+                        return res
+                    else:
+                        return result
         raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                              name=attr,
                              obj=cls)
