@@ -1,11 +1,15 @@
-from typing import Protocol, Any, runtime_checkable
+from typing import Protocol, Any, runtime_checkable, TypeVar, Callable, Type
 import collections
+
+T = TypeVar('T')
+def register(cls: Type[T], get_code_objects: Callable[[T], list[Any]]) -> None:
+    """Register a function to get code objects for a specific class type."""
 
 
 @runtime_checkable
 class PrivateAttrMapping(Protocol):
     """Mapping which must contain `__private_attrs__`, but allows any other keys."""
-    __private_attrs__: list[str]
+    __private_attrs__: collections.abc.Sequence[str]
 
     def __getitem__(self, key: str) -> Any: ...
     def __iter__(self) -> Any: ...

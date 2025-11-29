@@ -15,13 +15,19 @@ class MyClass(PrivateAttrBase):
     def public_attr1(self):
         return self.private_attr1
 ```
+Four the wrapper type, you can register it with the `register` function:
+```python
+register(MyClass, function_to_get_code_objects)
+```
+The `function_to_get_code_objects` should take an instance of `MyClass` and return a list of all possible code objects
+that can access the private attributes.
 """
 
 import random
 import hashlib
 import inspect
-from typing import Any, Callable
-from types import FrameType
+from typing import Any, Callable, TypeVar, Type
+from types import FrameType, CodeType
 import collections
 import string
 import threading
@@ -82,24 +88,63 @@ def _generate_private_attr_name(obj_id: int, attr_name: str) -> str:
 _clear_obj = _generate_private_attr_cache("clean")
 
 
+_REGISTER_GET_TYPE = {}
+T = TypeVar('T')
+def register(type_obj: Type[T], get_func: Callable[[T], list[CodeType]]):
+    """
+    Register a type and a function to get all possible code objects from an instance of that type.
+    """
+    _REGISTER_GET_TYPE[id(type_obj)] = get_func
+
+
 def _get_all_possible_code(obj, _seen=None):
     if _seen is None:
         _seen = set()
     if id(obj) in _seen:
         return []
     _seen.add(id(obj))
-    if not hasattr(obj, "__get__"):
+    if id(type(obj)) in _REGISTER_GET_TYPE:
+        yield from _REGISTER_GET_TYPE[id(type(obj))](obj)
+        return
+    if not hasattr(obj, "__get__") and not hasattr(obj, "__call__"):
         return []
+    if isinstance(obj, property):
+        if obj.fget is not None and hasattr(obj.fget, "__code__"):
+            yield obj.fget.__code__
+        if obj.fset is not None and hasattr(obj.fset, "__code__"):
+            yield obj.fset.__code__
+        if obj.fdel is not None and hasattr(obj.fdel, "__code__"):
+            yield obj.fdel.__code__
+        return
+    if hasattr(obj, "__func__"):
+        if hasattr(obj.__func__, "__code__"):
+            yield obj.__func__.__code__
+            return
     try:
         attr_list = dir(obj)
     except Exception:
         attr_list = object.__dir__(obj)
     for i in attr_list:
-        if i not in object.__dir__(obj.__class__):
+        if i not in object.__dir__(obj.__class__) and not (i.startswith("__") and i.endswith("__")):
             attribute = getattr(obj, i, None)
             if hasattr(attribute, "__code__"):
                 yield attribute.__code__
-            elif hasattr(attribute, "__get__"):
+            elif isinstance(attribute, collections.abc.Sequence) and not isinstance(attribute, (str, bytes, bytearray)):
+                try:
+                    for j in attribute:
+                        if hasattr(j, "__code__"):
+                            yield j.__code__
+                        if hasattr(j, "__get__"):
+                            yield from _get_all_possible_code(j, _seen)
+                except Exception:
+                    continue
+            elif isinstance(attribute, collections.abc.Mapping):
+                for j in attribute.values():
+                    if hasattr(j, "__code__"):
+                        yield j.__code__
+                    if hasattr(j, "__get__"):
+                        yield from _get_all_possible_code(j, _seen)
+            if hasattr(attribute, "__get__"):
                 yield from _get_all_possible_code(attribute, _seen)
 
 
@@ -146,12 +191,23 @@ class PrivateAttrType(type):
                 change = True
         if change:
             attrs["__private_attrs__"] = tuple(set(private_attr_list))
-        if "__private_attrs__" in private_attr_list:
-            raise TypeError("'__private_attrs__' cannot contain '__private_attrs__' itself")
-        if "__name__" in private_attr_list:
-            raise TypeError("'__private_attrs__' cannot contain '__name__' attribute")
-        if "__module__" in private_attr_list:
-            raise TypeError("'__private_attrs__' cannot contain '__module__' attribute")
+        invalid_names = [
+            "__private_attrs__",
+            "__name__",
+            "__module__",
+            "__class__",
+            "__dict__",
+            "__slots__",
+            "__weakref__",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
+            "__delattr__",
+            "__del__",
+        ]
+        for i in invalid_names:
+            if i in private_attr_list:
+                raise TypeError(f"'__private_attrs__' cannot contain the invalid attribute name '{i}'")
         need_update = []
         all_allowed_attrs = list(attrs.values())
         for i in private_attr_list:
@@ -178,7 +234,7 @@ class PrivateAttrType(type):
                     yield i.__code__
                 if hasattr(i, "__get__"):
                     yield from _get_all_possible_code(i)
-                    
+
         def is_class_frame(frame: FrameType):
             frame = frame.f_back
             if frame is None:
@@ -196,10 +252,18 @@ class PrivateAttrType(type):
                                      name=attr,
                                      obj=self)
             if original_getattribute:
-                return original_getattribute(self, attr)
+                result = original_getattribute(self, attr)
+                if hasattr(result, "__code__"):
+                    if result.__code__ not in type_allowed_code[id(type_instance)]:
+                        type_allowed_code[id(type_instance)] += (result.__code__,)
+                return result
             for all_subtype in type_instance.__mro__[1:]:
                 if hasattr(all_subtype, "__getattribute__"):
-                    return all_subtype.__getattribute__(self, attr)
+                    result = all_subtype.__getattribute__(self, attr)
+                    if hasattr(result, "__code__"):
+                        if result.__code__ not in type_allowed_code[id(type_instance)]:
+                            type_allowed_code[id(type_instance)] += (result.__code__,)
+                    return result
             raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
                                  name=attr,
                                  obj=self)
@@ -244,10 +308,18 @@ class PrivateAttrType(type):
                                 else:
                                     return attribute
             if original_getattr:
-                return original_getattr(self, attr)
+                result = original_getattr(self, attr)
+                if hasattr(result, "__code__"):
+                    if result.__code__ not in type_allowed_code[id(type_instance)]:
+                        type_allowed_code[id(type_instance)] += (result.__code__,)
+                return result
             for all_subtype in type_instance.__mro__[1:]:
                 if hasattr(all_subtype, "__getattr__"):
-                    return all_subtype.__getattr__(self, attr)
+                    result = all_subtype.__getattr__(self, attr)
+                    if hasattr(result, "__code__"):
+                        if result.__code__ not in type_allowed_code[id(type_instance)]:
+                            type_allowed_code[id(type_instance)] += (result.__code__,)
+                    return result
             raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
                                  name=attr,
                                  obj=self)
@@ -368,7 +440,11 @@ class PrivateAttrType(type):
             hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
                 PrivateAttrType._type_attr_dict[id(cls)][_generate_private_attr_name(id(cls), "__private_attrs__")]:
             raise AttributeError()
-        return super().__getattribute__(attr)
+        result = super().__getattribute__(attr)
+        if hasattr(result, "__code__"):
+            if result.__code__ not in PrivateAttrType._type_allowed_code[id(cls)]:
+                PrivateAttrType._type_allowed_code[id(cls)] += (result.__code__,)
+        return result
 
     def __getattr__(cls, attr):
         if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
@@ -404,6 +480,18 @@ class PrivateAttrType(type):
                              obj=cls)
 
     def __setattr__(cls, attr, value):
+        invalid_names = [
+            "__class__",
+            "__delattr__",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
+            "__getstate__",
+            "__setstate__",
+            "__del__",
+        ]
+        if attr in invalid_names:
+            raise AttributeError(f"cannot set '{attr}' attribute on class '{cls.__name__}'")
         if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
             hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
                 PrivateAttrType._type_attr_dict[id(cls)][_generate_private_attr_name(id(cls), "__private_attrs__")]:
@@ -426,6 +514,18 @@ class PrivateAttrType(type):
             type.__setattr__(cls, attr, value)
 
     def __delattr__(cls, attr):
+        invalid_names = [
+            "__class__",
+            "__delattr__",
+            "__getattribute__",
+            "__getattr__",
+            "__setattr__",
+            "__getstate__",
+            "__setstate__",
+            "__del__",
+        ]
+        if attr in invalid_names:
+            raise AttributeError(f"cannot delete '{attr}' attribute on class '{cls.__name__}'")
         if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
             hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
                 PrivateAttrType._type_attr_dict[id(cls)][_generate_private_attr_name(id(cls), "__private_attrs__")]:
@@ -465,6 +565,10 @@ class PrivateAttrType(type):
 
 
 class PrivateAttrBase(metaclass=PrivateAttrType):
+    """
+    The base class for creating classes with private attributes.
+    Private attributes are defined in the `__private_attrs__` sequence and are only accessible in class.
+    """
     __private_attrs__: list[str] | tuple[str] = ()
     __slots__ = ()
 
