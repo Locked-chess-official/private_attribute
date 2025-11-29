@@ -21,6 +21,7 @@ import random
 import hashlib
 import inspect
 from typing import Any, Callable
+from types import FrameType
 import collections
 import string
 import threading
@@ -102,10 +103,25 @@ def _get_all_possible_code(obj, _seen=None):
                 yield from _get_all_possible_code(attribute, _seen)
 
 
+def _climb_to_allowed_code(frame: FrameType, allowed_code_set):
+    while frame is not None:
+        code = frame.f_code
+
+        if code in allowed_code_set:
+            return True
+
+        if "<locals>" not in code.co_qualname:
+            return False
+
+        frame = frame.f_back
+
+    return False
+
+
+
 class PrivateAttrType(type):
     _type_attr_dict = {}
     _type_allowed_code = {}
-    _type_allowed_code_name = {}
 
     def __new__(cls, name: str, bases: tuple[type], attrs: dict[str, Any]):
         type_slots = attrs.get("__slots__", ())
@@ -129,7 +145,6 @@ class PrivateAttrType(type):
             raise TypeError("'__private_attrs__' cannot contain '__module__' attribute")
         need_update = []
         all_allowed_attrs = list(attrs.values())
-        all_allowed_names = list(attrs.keys())
         for i in private_attr_list:
             if not isinstance(i, str):
                 raise TypeError(f"'__private_attrs__' should only contain string elements, not '{type(i).__name__}'")
@@ -155,17 +170,16 @@ class PrivateAttrType(type):
                 if hasattr(i, "__get__"):
                     yield from _get_all_possible_code(i)
                     
-        def is_class_frame(frame):
+        def is_class_frame(frame: FrameType):
             frame = frame.f_back
             if frame is None:
                 return False
             if frame.f_code.co_name == "<module>":
                 return False
-            if frame.f_code in type_allowed_code.get(id(type_instance), ()):
+            code_list = list(get_all_code_objects())
+            if frame.f_code in code_list:
                 return True
-            if frame.f_code.co_name in all_allowed_names:
-                return True
-            return False
+            return _climb_to_allowed_code(frame, code_list)
 
         def __getattribute__(self, attr):
             if attr in private_attr_list:
@@ -320,29 +334,21 @@ class PrivateAttrType(type):
             for i in private_attr_list
         )}
         type_allowed_code[id(type_instance)] = tuple(get_all_code_objects())
-        cls._type_allowed_code_name[id(type_instance)] = tuple(
-            (hashlib.sha256(i.encode("utf-8")).hexdigest(), hashlib.sha256(f"{id(type_instance)}_{i}".encode("utf-8")).hexdigest())
-            for i in all_allowed_names
-        )
         for i in need_update:
             new_attr = _generate_private_attr_name(id(type_instance), i[0])
             type_attr_dict[id(type_instance)][new_attr] = i[1]
         return type_instance
 
-    def _is_class_code(cls, frame):
+    def _is_class_code(cls, frame: FrameType):
         frame = frame.f_back
         if frame is None:
             return False
         if frame.f_code.co_name == "<module>":
             return False
-        if frame.f_code in PrivateAttrType._type_allowed_code.get(id(cls), ()):
+        code_list = PrivateAttrType._type_allowed_code.get(id(cls), ())
+        if frame.f_code in code_list:
             return True
-        name = frame.f_code.co_name
-        hash_tuple = (hashlib.sha256(name.encode("utf-8")).hexdigest(),
-               hashlib.sha256(f"{id(cls)}_{name}".encode("utf-8")).hexdigest())
-        if hash_tuple in PrivateAttrType._type_allowed_code_name.get(id(cls), ()):
-            return True
-        return False
+        return _climb_to_allowed_code(frame, code_list)
 
     def __getattribute__(cls, attr):
         if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
