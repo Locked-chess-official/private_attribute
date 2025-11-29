@@ -113,7 +113,16 @@ def _climb_to_allowed_code(frame: FrameType, allowed_code_set):
         if "<locals>" not in code.co_qualname:
             return False
 
+        namelist = code.co_qualname.split('.')
+        while "<locals>" in namelist:
+            namelist.pop()
+        expected_qualname = '.'.join(namelist)
         frame = frame.f_back
+        if frame is None:
+            return False
+
+        if expected_qualname not in frame.f_code.co_qualname:
+            return False
 
     return False
 
