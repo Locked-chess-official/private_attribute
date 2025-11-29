@@ -29,23 +29,6 @@ print(hasattr(obj, 'b'))  # False
 print(hasattr(obj, 'c'))  # False
 ```
 
-If you want to let the module support your wrapper type, use `register` function:
-
-```python
-from private_attribute import PrivateAttrBase, register
-
-class MyWrapper:
-    def __init__(self, func):
-        self.func = func
-
-    def __get__(self, instance, owner):
-        return self.func(instance)
-
-register(MyWrapper, lambda self: [self.func.__code__])
-```
-
-In this case, the module can get the code object of `MyWrapper` which will be run.
-
 ## Notes
 
 - All of the private attributes class must contain the `__private_attrs__` attribute.
