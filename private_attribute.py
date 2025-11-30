@@ -85,13 +85,21 @@ _clear_obj = _generate_private_attr_cache("clean")
 
 _REGISTER_GET_TYPE = {}
 T = TypeVar('T')
-
-@warnings.deprecated("The 'register' function is deprecated and will be removed in future versions.")
-def register(type_obj: Type[T], get_func: Callable[[T], list[CodeType]]):
-    """
-    Register a type and a function to get all possible code objects from an instance of that type.
-    """
-    _REGISTER_GET_TYPE[id(type_obj)] = get_func
+if hasattr(warnings, 'deprecated'):
+    @warnings.deprecated("The 'register' function is deprecated and will be removed in future versions.")
+    def register(type_obj: Type[T], get_func: Callable[[T], list[CodeType]]):
+        """
+        Register a type and a function to get all possible code objects from an instance of that type.
+        """
+        _REGISTER_GET_TYPE[id(type_obj)] = get_func
+else:
+    def register(type_obj: Type[T], get_func: Callable[[T], list[CodeType]]):
+        """
+        Register a type and a function to get all possible code objects from an instance of that type.
+        """
+        warnings.warn("The 'register' function is deprecated and will be removed in future versions.",
+                      DeprecationWarning)
+        _REGISTER_GET_TYPE[id(type_obj)] = get_func
 
 
 def _get_all_possible_code(obj, _seen=None):
