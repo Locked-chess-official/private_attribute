@@ -190,6 +190,9 @@ class PrivateAttrType(type):
             if frame.f_code.co_name == "<module>":
                 return False
             code_list = list(type_allowed_code[id(type_instance)])
+            for i in bases:
+                if isinstance(i, cls):
+                    code_list += list(type_allowed_code[id(i)])
             if frame.f_code in code_list:
                 return True
             if frame.f_code in (
