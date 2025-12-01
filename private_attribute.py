@@ -88,6 +88,10 @@ _clear_obj = _generate_private_attr_cache("clean")
 
 
 class PrivateWrapProxy:
+    """
+    The proxy class for the private attribute decorator.
+    It can ensure that the original function will be saved.
+    """
     def __init__(self, decorator):
         self.decorator = decorator
 
@@ -108,12 +112,17 @@ class PrivateWrapParent:
     def __call__(self, *args, **kwargs):
         self.obj = self.parent.result = self.obj(*args, **kwargs)
         if len(args) == 1 and len(kwargs) == 0:
-            if hasattr(args[0], "__code__"):
-                code = args[0].__code__
+            var = args[0]
+            if isinstance(var, PrivateWrap):
+                self.parent.__func__.extend(var.__func__)
+                return self.parent
+            elif hasattr(var, "__code__"):
+                code = var.__code__
                 if code.co_qualname == self.parent.__func__[0].__qualname__ and \
                 code.co_filename == self.parent.__func__[0].__code__.co_filename:
-                    self.parent.__func__.append(args[0])
-            return self.parent
+                    self.parent.__func__.append(var)
+                    return self.parent
+            return self
         else:
             return self
 
