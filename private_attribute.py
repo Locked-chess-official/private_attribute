@@ -570,7 +570,11 @@ class PrivateAttrType(type):
         cls._type_need_call[id(type_instance)] = need_call
         for i in need_update:
             new_attr = need_call(id(type_instance), i[0])
-            type_attr_dict[id(type_instance)][new_attr] = i[1]
+            value_i = i[1]
+            if isinstance(value_i, _PrivateWrap):
+                type_attr_dict[id(type_instance)][new_attr] = value_i._private_result
+            else:
+                type_attr_dict[id(type_instance)][new_attr] = value_i
         return type_instance
 
     def _is_class_code(cls, frame: FrameType):
