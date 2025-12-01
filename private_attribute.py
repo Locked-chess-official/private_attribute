@@ -133,7 +133,7 @@ class PrivateAttrType(type):
         hash_private_list = []
         for i in private_attr_list:
             hash_private_list.append(cls._hash_private_attribute(i))
-        attrs["__private_attrs__"] = hash_private_list
+        attrs["__private_attrs__"] = tuple(hash_private_list)
 
         invalid_names = [
             "__private_attrs__",
@@ -453,9 +453,9 @@ class PrivateAttrType(type):
         def __setstate__(self, state):
             raise TypeError(f"Cannot unpickle '{type_instance.__name__}' objects")
 
-        if not attrs.get("__getstate__", None):
+        if "__getstate__" not in attrs:
             attrs["__getstate__"] = __getstate__
-        if not attrs.get("__setstate__", None):
+        if "__setstate__" not in attrs:
             attrs["__setstate__"] = __setstate__
         type_instance = super().__new__(cls, name, bases, attrs)
         type_attr_dict[id(type_instance)] = {need_call(id(type_instance), "__private_attrs__"): tuple(
