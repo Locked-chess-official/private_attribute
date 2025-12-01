@@ -429,7 +429,8 @@ class PrivateAttrType(type):
                 del caller_self
 
         def __del__(self):
-            _clear_obj(id(self))
+            if _clear_obj:
+                _clear_obj(id(self))
             if id(self) in obj_attr_dict:
                 del obj_attr_dict[id(self)]
             if original_del:
@@ -688,7 +689,8 @@ class PrivateAttrType(type):
             del caller_cls
 
     def __del__(cls):
-        _clear_obj(id(cls))
+        if callable(_clear_obj):
+            _clear_obj(id(cls))
         if id(cls) in PrivateAttrType._type_attr_dict:
             del PrivateAttrType._type_attr_dict[id(cls)]
         if id(cls) in PrivateAttrType._type_allowed_code:
