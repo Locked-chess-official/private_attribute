@@ -17,6 +17,7 @@ class MyClass(PrivateAttrBase):
 ```
 """
 
+from __future__ import annotations
 import random
 import hashlib
 import inspect
@@ -26,6 +27,7 @@ import collections
 import string
 import threading
 import time
+import functools
 
 _running_time = time.time()
 
@@ -85,6 +87,93 @@ def _generate_private_attr_name(obj_id: int, attr_name: str) -> str:
 _clear_obj = _generate_private_attr_cache("clean")
 
 
+class PrivateWrapProxy:
+    def __init__(self, decorator):
+        self.decorator = decorator
+
+    def __call__(self, func):
+        if isinstance(func, PrivateWrap):
+            return PrivateWrap(self.decorator, func.result, func.__func__)
+        return PrivateWrap(self.decorator, func, func)
+
+
+class PrivateWrapParent:
+    def __init__(self, obj, parent: PrivateWrap):
+        self.obj = obj
+        self.parent = parent
+
+    def __getattr__(self, name):
+        return PrivateWrapParent(getattr(self.obj, name), self.parent)
+
+    def __call__(self, *args, **kwargs):
+        self.obj = self.parent.result = self.obj(*args, **kwargs)
+        if len(args) == 1 and len(kwargs) == 0:
+            if hasattr(args[0], "__code__"):
+                code = args[0].__code__
+                if code.co_qualname == self.parent.__func__[0].__qualname__ and \
+                code.co_filename == self.parent.__func__[0].__code__.co_filename:
+                    self.parent.__func__.append(args[0])
+            return self.parent
+        else:
+            return self
+
+    def __getitem__(self, name):
+        return PrivateWrapParent(self.obj.__getitem__(name), self.parent)
+
+
+class PrivateWrap:
+    def __init__(self, decorator, func, original_func):
+        self.__func__ = [original_func]
+        self.result = decorator(func)
+        functools.update_wrapper(self, original_func)
+
+    def __call__(self, *args, **kwargs):
+        return self.result(*args, **kwargs)
+
+    def __get__(self, instance, owner):
+        if hasattr(self.result, "__get__"):
+            return self.result.__get__(instance, owner)
+        return self.result
+
+    def __set__(self, instance, value):
+        if hasattr(self.result, "__set__"):
+            return self.result.__set__(instance, value)
+
+    def __delete__(self, instance):
+        if hasattr(self.result, "__delete__"):
+            return self.result.__delete__(instance)
+
+    def __getattr__(self, name):
+        return PrivateWrapParent(getattr(self.result, name), self)
+
+    def __set_name__(self, owner, name):
+        if hasattr(self.result, "__set_name__"):
+            self.result.__set_name__(owner, name)
+
+    def __wrapped__(self):
+        return self.result
+
+    def __getitem__(self, name):
+        return PrivateWrapParent(self.result.__getitem__(name), self)
+
+
+_FORWARD_DUNDERS = [
+    "__iter__", "__next__", "__len__", "__contains__", "__str__", "__repr__", 
+    "__bool__", "__bytes__", "__format__", "__hash__", "__eq__", "__ne__", "__lt__",
+    "__le__", "__gt__", "__ge__", "__add__", "__radd__", "__sub__", "__rsub__",
+    "__mul__", "__rmul__", "__matmul__", "__rmatmul__", "__truediv__", "__rtruediv__",
+    "__floordiv__", "__rfloordiv__", "__mod__", "__rmod__", "__pow__", "__rpow__",
+    "__lshift__", "__rlshift__", "__rshift__", "__rrshift__", "__and__", "__rand__",
+    "__xor__", "__rxor__", "__or__", "__ror__", "__neg__", "__pos__", "__abs__",
+    "__invert__", "__round__", "__index__", "__enter__", "__exit__", "__aiter__",
+    "__anext__", "__await__"]
+for i in _FORWARD_DUNDERS:
+    setattr(PrivateWrap, i,
+            lambda self, *args, **kwargs: PrivateWrapParent(getattr(self.result, i)(*args, **kwargs), self))
+    setattr(PrivateWrapParent, i,
+            lambda self, *args, **kwargs: PrivateWrapParent(getattr(self.obj, i)(*args, **kwargs), self.parent))
+
+
 def _get_all_possible_code(obj, _seen=None):
     if _seen is None:
         _seen = set()
@@ -102,7 +191,11 @@ def _get_all_possible_code(obj, _seen=None):
             yield obj.fdel.__code__
         return
     if hasattr(obj, "__func__"):
-        if hasattr(obj.__func__, "__code__"):
+        if isinstance(obj, PrivateWrap):
+            for i in obj.__func__:
+                if hasattr(i, "__code__"):
+                    yield i.__code__
+        elif hasattr(obj.__func__, "__code__"):
             yield obj.__func__.__code__
             return
     return []
@@ -111,9 +204,7 @@ def _get_all_possible_code(obj, _seen=None):
 class PrivateAttrType(type):
     _type_attr_dict = {}
     _type_allowed_code = {}
-    _type_allowed_frame_head = {}
     _type_need_call = {}
-    _all_type = {}
 
     @classmethod
     def _hash_private_attribute(cls, name: str) -> tuple[str]:
@@ -137,7 +228,6 @@ class PrivateAttrType(type):
         hash_private_list = []
         for i in private_attr_list:
             hash_private_list.append(cls._hash_private_attribute(i))
-        attrs["__private_attrs__"] = tuple(hash_private_list)
 
         invalid_names = [
             "__private_attrs__",
@@ -169,10 +259,20 @@ class PrivateAttrType(type):
                 del attrs[i]
                 need_update.append((i, original_value))
         original_getattribute = attrs.get("__getattribute__", None)
+        if isinstance(original_getattribute, PrivateWrap):
+            original_getattribute = original_getattribute.result
         original_getattr = attrs.get("__getattr__", None)
+        if isinstance(original_getattr, PrivateWrap):
+            original_getattr = original_getattr.result
         original_setattr = attrs.get("__setattr__", None)
+        if isinstance(original_setattr, PrivateWrap):
+            original_setattr = original_setattr.result
         original_delattr = attrs.get("__delattr__", None)
+        if isinstance(original_delattr, PrivateWrap):
+            original_delattr = original_delattr.result
         original_del = attrs.get("__del__", None)
+        if isinstance(original_del, PrivateWrap):
+            original_del = original_del.result
         obj_attr_dict = {}
         type_attr_dict = cls._type_attr_dict
         type_allowed_code = cls._type_allowed_code
@@ -194,7 +294,7 @@ class PrivateAttrType(type):
             if frame.f_code.co_name == "<module>":
                 return False
             code_list = list(type_allowed_code[id(type_instance)])
-            for i in bases:
+            for i in type_instance.__mro__[1:]:
                 if isinstance(i, cls):
                     code_list += list(type_allowed_code[id(i)])
             if frame.f_code in code_list:
@@ -206,14 +306,6 @@ class PrivateAttrType(type):
                 __delattr__.__code__,
                 __del__.__code__,
             ):
-                return True
-            full_name = frame.f_code.co_qualname
-            if full_name.startswith(head_frame) and \
-                    isinstance(frame.f_locals.get("self", None), type_instance):
-                frame_module = inspect.getmodule(frame)
-                if frame_module is not type_module:
-                    return False
-                type_allowed_code[id(type_instance)] += (frame.f_code,)
                 return True
             return False
 
@@ -276,9 +368,6 @@ class PrivateAttrType(type):
                                 else:
                                     if hasattr(attribute, "__get__"):
                                         result = attribute.__get__(self, type_instance)
-                                        if hasattr(result, "__code__"):
-                                            if result.__code__ not in type_allowed_code[id(type_instance)]:
-                                                type_allowed_code[id(type_instance)] += (result.__code__,)
                                         return result
                                     else:
                                         return attribute
@@ -296,9 +385,6 @@ class PrivateAttrType(type):
                             if hasattr(all_subtype, "__getattr__") and isinstance(all_subtype, PrivateAttrType):
                                 try:
                                     result = all_subtype.__getattr__(self, attr)
-                                    if hasattr(result, "__code__"):
-                                        if result.__code__ not in type_allowed_code[id(type_instance)]:
-                                            type_allowed_code[id(type_instance)] += (result.__code__,)
                                     return result
                                 except AttributeError:
                                     continue
@@ -307,9 +393,6 @@ class PrivateAttrType(type):
                                             obj=self)
                 if original_getattr:
                     result = original_getattr(self, attr)
-                    if hasattr(result, "__code__"):
-                        if result.__code__ not in type_allowed_code[id(type_instance)]:
-                            type_allowed_code[id(type_instance)] += (result.__code__,)
                     return result
                 for all_subtype in type_instance.__mro__[1:]:
                     if hasattr(all_subtype, "__getattr__"):
@@ -367,12 +450,6 @@ class PrivateAttrType(type):
                         if hasattr(all_subtype, "__setattr__"):
                             all_subtype.__setattr__(self, attr, value)
                             break
-            except:
-                raise
-            else:
-                if hasattr(value, "__code__"):
-                    if value.__code__ not in type_allowed_code[id(type_instance)]:
-                        type_allowed_code[id(type_instance)] += (value.__code__,)
             finally:
                 del frame
                 del caller_self
@@ -448,48 +525,38 @@ class PrivateAttrType(type):
                         all_subtype.__del__(self)
                         break
 
-        attrs['__getattribute__'] = __getattribute__
-        attrs['__getattr__'] = __getattr__
-        attrs['__setattr__'] = __setattr__
-        attrs['__delattr__'] = __delattr__
-        attrs["__del__"] = __del__
-
         def __getstate__(self):
             raise TypeError(f"Cannot pickle '{type_instance.__name__}' objects")
 
         def __setstate__(self, state):
             raise TypeError(f"Cannot unpickle '{type_instance.__name__}' objects")
+        all_code = tuple(get_all_code_objects())
 
         if "__getstate__" not in attrs:
             attrs["__getstate__"] = __getstate__
         if "__setstate__" not in attrs:
             attrs["__setstate__"] = __setstate__
+        attrs['__getattribute__'] = __getattribute__
+        attrs['__getattr__'] = __getattr__
+        attrs['__setattr__'] = __setattr__
+        attrs['__delattr__'] = __delattr__
+        attrs["__del__"] = __del__
+        attrs["__private_attrs__"] = tuple(hash_private_list)
+        all_items = attrs.items()
+        for k, v in all_items:
+            if isinstance(v, PrivateWrap):
+                attrs[k] = v.result
         type_instance = super().__new__(cls, name, bases, attrs)
         type_attr_dict[id(type_instance)] = {need_call(id(type_instance), "__private_attrs__"): tuple(
             (hashlib.sha256(i.encode("utf-8")).hexdigest(), 
              hashlib.sha256(f"{id(type_instance)}_{i}".encode("utf-8")).hexdigest())
             for i in private_attr_list
         )}
-        type_allowed_code[id(type_instance)] = tuple(get_all_code_objects())
+        type_allowed_code[id(type_instance)] = tuple(all_code)
         cls._type_need_call[id(type_instance)] = need_call
         for i in need_update:
             new_attr = need_call(id(type_instance), i[0])
             type_attr_dict[id(type_instance)][new_attr] = i[1]
-        now_frame = inspect.currentframe()
-        try:
-            last_frame = now_frame.f_back
-            if last_frame.f_code.co_name == "<module>":
-                head_frame = (f"{name}.",)
-            else:
-                head_frame = (f"{last_frame.f_code.co_qualname}.{name}.", f"{last_frame.f_code.co_filename}.<local>.{name}")
-            cls._type_allowed_frame_head[id(type_instance)] = head_frame
-        finally:
-            del now_frame
-            del last_frame
-        type_module = inspect.getmodule(type_instance)
-        if (name, id(type_module)) in cls._all_type:
-            raise TypeError(f"Cannot create '{name}' class in the same module twice")
-        cls._all_type[(name, id(type_module))] = id(type_instance)
         return type_instance
 
     def _is_class_code(cls, frame: FrameType):
@@ -500,14 +567,10 @@ class PrivateAttrType(type):
         code_list = PrivateAttrType._type_allowed_code.get(id(cls), ())
         if frame.f_code in code_list:
             return True
-        full_name = frame.f_code.co_qualname
-        if full_name.startswith(PrivateAttrType._type_allowed_frame_head.get(id(cls), ())) and \
-            issubclass(frame.f_locals.get("cls", None), cls):
-            frame_module = inspect.getmodule(frame)
-            type_module = inspect.getmodule(cls)
-            if frame_module is not type_module:
-                return False
-            return True
+        for icls in cls.__mro__[1:]:
+            code_list = PrivateAttrType._type_allowed_code.get(id(icls), ())
+            if frame.f_code in code_list:
+                return True
         return False
 
     def __getattribute__(cls, attr):
@@ -524,9 +587,6 @@ class PrivateAttrType(type):
                             PrivateAttrType._type_need_call[id(icls)](id(icls), "__private_attrs__")]:
                     raise AttributeError()
         result = super().__getattribute__(attr)
-        if hasattr(result, "__code__"):
-            if result.__code__ not in PrivateAttrType._type_allowed_code[id(cls)]:
-                PrivateAttrType._type_allowed_code[id(cls)] += (result.__code__,)
         return result
 
     def __getattr__(cls, attr):
@@ -555,9 +615,6 @@ class PrivateAttrType(type):
                     else:
                         if hasattr(result, "__get__"):
                             res = result.__get__(None, cls)
-                            if hasattr(res, "__code__"):
-                                if res.__code__ not in PrivateAttrType._type_allowed_code[id(cls)]:
-                                    PrivateAttrType._type_allowed_code[id(cls)] += (res.__code__,)
                             return res
                         else:
                             return result
@@ -594,6 +651,7 @@ class PrivateAttrType(type):
             "__getstate__",
             "__setstate__",
             "__del__",
+            "__private_attrs__"
         ]
         if attr in invalid_names:
             raise AttributeError(f"cannot set '{attr}' attribute on class '{cls.__name__}'")
@@ -629,12 +687,6 @@ class PrivateAttrType(type):
                             return
                 else:
                     type.__setattr__(cls, attr, value)
-        except:
-            raise
-        else:
-            if hasattr(value, "__code__"):
-                if value.__code__ not in PrivateAttrType._type_allowed_code[id(cls)]:
-                    PrivateAttrType._type_allowed_code[id(cls)] += (value.__code__,)
         finally:
             del frame
             del caller_cls
@@ -649,6 +701,7 @@ class PrivateAttrType(type):
             "__getstate__",
             "__setstate__",
             "__del__",
+            "__private_attrs__"
         ]
         if attr in invalid_names:
             raise AttributeError(f"cannot delete '{attr}' attribute on class '{cls.__name__}'")
@@ -704,11 +757,6 @@ class PrivateAttrType(type):
             del PrivateAttrType._type_allowed_code[id(cls)]
         if id(cls) in PrivateAttrType._type_need_call:
             del PrivateAttrType._type_need_call[id(cls)]
-        if id(cls) in PrivateAttrType._type_allowed_frame_head:
-            del PrivateAttrType._type_allowed_frame_head[id(cls)]
-        for key, value in PrivateAttrType._type_attr_dict.items():
-            if value == id(cls):
-                del PrivateAttrType._type_attr_dict[key]
 
     def __getstate__(cls):
         raise TypeError("Cannot pickle PrivateAttrType classes")

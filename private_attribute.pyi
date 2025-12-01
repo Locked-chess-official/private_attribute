@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import Protocol, Any, runtime_checkable, TypeVar, Callable, Type
 import collections
 
@@ -24,12 +25,35 @@ class PrivateAttrType(type):
         name: str,
         bases: tuple[type, ...],
         attrs: PrivateAttrMapping,
+        private_func: Callable[[int, str], str] | None=None
     ):
         return super().__new__(cls, name, bases, dict(attrs))
 
     def __init__(cls):
-        cls.__private_attrs__: collections.abc.Sequence[str]
+        cls.__private_attrs__: collections.abc.Sequence[tuple[str, str]]
 
 
 class PrivateAttrBase(metaclass=PrivateAttrType):
     __private_attrs__: collections.abc.Sequence[str] = []
+
+class PrivateWrapProxy:
+    def __init__(self, decorator):
+        self.decorator: Any = decorator
+
+    def __call__(self, func) -> PrivateWrap: ...
+
+class PrivateWrapParent:
+    def __init__(self, obj, parent: PrivateWrap):
+        self.obj = obj
+        self.parent = parent
+
+    def __getattr__(self, name: str) -> PrivateWrapParent: ...
+    
+    def __call__(self, *args, **kwargs) -> PrivateWrapParent | PrivateWrap: ...
+
+class PrivateWrap:
+    def __init__(self, decorator, func, original_func):
+        self.__func__ = [original_func]
+        self.result = decorator(func)
+
+    def __getattr__(self, name: str) -> PrivateWrapParent: ...

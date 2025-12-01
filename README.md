@@ -52,6 +52,34 @@ obj.public_way()  # (1, 2, 3)
 
 ```
 
+If the method will be decorated, the `property`, `classmethod` and `staticmethod` will be supported.
+For the other, you can use the `PrivateWrapProxy` to wrap the function:
+
+```python
+from private_attribute import PrivateAttrBase, PrivateWrapProxy
+
+class MyClass(PrivateAttrBase):
+    __private_attrs__ = ['a', 'b', 'c']
+    @PrivateWrapProxy(decorator1())
+    @PrivateWrapProxy(decorator2())
+    def method1(self):
+        ...
+
+    @method1.attr_name
+    def method1(self):
+        ...
+
+    @PrivateWrapProxy(decorator3())
+    def method2(self):
+        ...
+
+    @method2.attr_name
+    def method2(self):
+        ...
+
+
+```
+
 ## Notes
 
 - All of the private attributes class must contain the `__private_attrs__` attribute.
