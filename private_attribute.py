@@ -98,7 +98,7 @@ class PrivateWrapProxy:
     def __call__(self, func):
         if isinstance(func, _PrivateWrap):
             return _PrivateWrap(self.decorator, func._private_result, func.__func_list__)
-        return _PrivateWrap(self.decorator, func, func)
+        return _PrivateWrap(self.decorator, func, [func])
 
 
 class _PrivateWrapParent:
@@ -128,8 +128,8 @@ class _PrivateWrapParent:
 
 
 class _PrivateWrap:
-    def __init__(self, decorator, func, original_func):
-        self.__func_list__ = [original_func]
+    def __init__(self, decorator, func, original_func: list[Callable]):
+        self.__func_list__ = original_func
         self._private_result = decorator(func)
         functools.update_wrapper(self, original_func)
 

@@ -40,20 +40,9 @@ class PrivateWrapProxy:
     def __init__(self, decorator):
         self.decorator: Any = decorator
 
-    def __call__(self, func) -> PrivateWrap: ...
+    def __call__(self, func) -> "_PrivateWrap": ...
 
-class PrivateWrapParent:
-    def __init__(self, obj, parent: PrivateWrap):
-        self.obj = obj
-        self.parent = parent
-
-    def __getattr__(self, name: str) -> PrivateWrapParent: ...
-    
-    def __call__(self, *args, **kwargs) -> PrivateWrapParent | PrivateWrap: ...
-
-class PrivateWrap:
-    def __init__(self, decorator, func, original_func):
-        self.__func__ = [original_func]
-        self.result = decorator(func)
-
-    def __getattr__(self, name: str) -> PrivateWrapParent: ...
+class _PrivateWrap:
+    def __init__(self, decorator, func, original_func: list[Callable]):
+        self.__func_list__ = original_func
+        self._private_result = decorator(func)
