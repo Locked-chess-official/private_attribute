@@ -234,9 +234,9 @@ class PrivateAttrType(type):
                                  obj=self)
 
         def __getattr__(self, attr):
+            frame = inspect.currentframe()
+            frame = frame.f_back
             try:
-                frame = inspect.currentframe()
-                frame = frame.f_back
                 caller_locals = frame.f_locals
                 caller_self = caller_locals.get('self', None)
                 del caller_locals
@@ -319,9 +319,9 @@ class PrivateAttrType(type):
                 del caller_self
 
         def __setattr__(self, attr, value):
+            frame = inspect.currentframe()
+            frame = frame.f_back
             try:
-                frame = inspect.currentframe()
-                frame = frame.f_back
                 caller_locals = frame.f_locals
                 caller_self = caller_locals.get('self', None)
                 del caller_locals
@@ -371,9 +371,9 @@ class PrivateAttrType(type):
                 del caller_self
 
         def __delattr__(self, attr):
+            frame = inspect.currentframe()
+            frame = frame.f_back
             try:
-                frame = inspect.currentframe()
-                frame = frame.f_back
                 caller_locals = frame.f_locals
                 caller_self = caller_locals.get('self', None)
                 del caller_locals
@@ -436,7 +436,7 @@ class PrivateAttrType(type):
             if original_del:
                 original_del(self)
             else:
-                for all_subtype in type_instance.__mro__[1:]:
+                for all_subtype in type.__getattribute__(type_instance, "__mro__")[1:]:
                     if hasattr(all_subtype, "__del__"):
                         all_subtype.__del__(self)
                         break
@@ -523,9 +523,9 @@ class PrivateAttrType(type):
         return result
 
     def __getattr__(cls, attr):
+        frame = inspect.currentframe()
+        frame = frame.f_back
         try:
-            frame = inspect.currentframe()
-            frame = frame.f_back
             caller_locals = frame.f_locals
             caller_cls: type|None = caller_locals.get("cls", None)
             del caller_locals
@@ -590,9 +590,9 @@ class PrivateAttrType(type):
         ]
         if attr in invalid_names:
             raise AttributeError(f"cannot set '{attr}' attribute on class '{cls.__name__}'")
+        frame = inspect.currentframe()
+        frame = frame.f_back
         try:
-            frame = inspect.currentframe()
-            frame = frame.f_back
             caller_locals = frame.f_locals
             caller_cls: type|None = caller_locals.get("cls", None)
             del caller_locals
@@ -645,9 +645,9 @@ class PrivateAttrType(type):
         ]
         if attr in invalid_names:
             raise AttributeError(f"cannot delete '{attr}' attribute on class '{cls.__name__}'")
+        frame = inspect.currentframe()
+        frame = frame.f_back
         try:
-            frame = inspect.currentframe()
-            frame = frame.f_back
             caller_locals = frame.f_locals
             caller_cls: type|None = caller_locals.get("cls", None)
             del caller_locals
