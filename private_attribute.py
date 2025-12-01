@@ -96,74 +96,71 @@ class PrivateWrapProxy:
         self.decorator = decorator
 
     def __call__(self, func):
-        if isinstance(func, PrivateWrap):
-            return PrivateWrap(self.decorator, func.result, func.__func__)
-        return PrivateWrap(self.decorator, func, func)
+        if isinstance(func, _PrivateWrap):
+            return _PrivateWrap(self.decorator, func._private_result, func.__func_list__)
+        return _PrivateWrap(self.decorator, func, func)
 
 
-class PrivateWrapParent:
-    def __init__(self, obj, parent: PrivateWrap):
-        self.obj = obj
+class _PrivateWrapParent:
+    def __init__(self, obj, parent: _PrivateWrap):
+        self._private_obj = obj
         self.parent = parent
 
     def __getattr__(self, name):
-        return PrivateWrapParent(getattr(self.obj, name), self.parent)
+        return _PrivateWrapParent(getattr(self._private_obj, name), self.parent)
 
     def __call__(self, *args, **kwargs):
-        self.obj = self.parent.result = self.obj(*args, **kwargs)
         if len(args) == 1 and len(kwargs) == 0:
             var = args[0]
-            if isinstance(var, PrivateWrap):
-                self.parent.__func__.extend(var.__func__)
+            if isinstance(var, _PrivateWrap):
+                self._private_obj = self.parent._private_result = self._private_obj(var._private_result)
+                self.parent.__func_list__.extend(var.__func_list__)
+                functools.update_wrapper(self.parent, self.parent.__func_list__[-1])
                 return self.parent
-            elif hasattr(var, "__code__"):
-                code = var.__code__
-                if code.co_qualname == self.parent.__func__[0].__qualname__ and \
-                code.co_filename == self.parent.__func__[0].__code__.co_filename:
-                    self.parent.__func__.append(var)
-                    return self.parent
+            self._private_obj = self.parent._private_result = self._private_obj(*args, **kwargs)
             return self
         else:
+            self._private_obj = self.parent._private_result = self._private_obj(*args, **kwargs)
             return self
 
     def __getitem__(self, name):
-        return PrivateWrapParent(self.obj.__getitem__(name), self.parent)
+        return _PrivateWrapParent(self._private_obj.__getitem__(name), self.parent)
 
 
-class PrivateWrap:
+class _PrivateWrap:
     def __init__(self, decorator, func, original_func):
-        self.__func__ = [original_func]
-        self.result = decorator(func)
+        self.__func_list__ = [original_func]
+        self._private_result = decorator(func)
         functools.update_wrapper(self, original_func)
 
     def __call__(self, *args, **kwargs):
-        return self.result(*args, **kwargs)
+        return self._private_result(*args, **kwargs)
 
     def __get__(self, instance, owner):
-        if hasattr(self.result, "__get__"):
-            return self.result.__get__(instance, owner)
-        return self.result
+        if hasattr(self._private_result, "__get__"):
+            return self._private_result.__get__(instance, owner)
+        return self._private_result
 
     def __set__(self, instance, value):
-        if hasattr(self.result, "__set__"):
-            return self.result.__set__(instance, value)
+        if hasattr(self._private_result, "__set__"):
+            return self._private_result.__set__(instance, value)
 
     def __delete__(self, instance):
-        if hasattr(self.result, "__delete__"):
-            return self.result.__delete__(instance)
+        if hasattr(self._private_result, "__delete__"):
+            return self._private_result.__delete__(instance)
 
     def __getattr__(self, name):
-        return PrivateWrapParent(getattr(self.result, name), self)
+        return _PrivateWrapParent(getattr(self._private_result, name), self)
 
     def __set_name__(self, owner, name):
-        if hasattr(self.result, "__set_name__"):
-            self.result.__set_name__(owner, name)
+        if hasattr(self._private_result, "__set_name__"):
+            self._private_result.__set_name__(owner, name)
 
     def __wrapped__(self):
-        return self.result
+        return self._private_result
 
     def __getitem__(self, name):
-        return PrivateWrapParent(self.result.__getitem__(name), self)
+        return _PrivateWrapParent(self._private_result.__getitem__(name), self)
 
 
 _FORWARD_DUNDERS = [
@@ -176,11 +173,19 @@ _FORWARD_DUNDERS = [
     "__xor__", "__rxor__", "__or__", "__ror__", "__neg__", "__pos__", "__abs__",
     "__invert__", "__round__", "__index__", "__enter__", "__exit__", "__aiter__",
     "__anext__", "__await__"]
+
+def _set_getting_attribute(i, cls):
+    def _privatewrap_function(self: _PrivateWrap, *args, **kwargs):
+        return _PrivateWrapParent(getattr(self._private_result, i)(*args, **kwargs), self)
+    def _privatewrapparent_function(self: _PrivateWrapParent, *args, **kwargs):
+        return _PrivateWrapParent(getattr(self._private_obj, i)(*args, **kwargs), self.parent)
+    if cls is _PrivateWrap:
+        return _privatewrap_function
+    return _privatewrapparent_function
+
 for i in _FORWARD_DUNDERS:
-    setattr(PrivateWrap, i,
-            lambda self, *args, **kwargs: PrivateWrapParent(getattr(self.result, i)(*args, **kwargs), self))
-    setattr(PrivateWrapParent, i,
-            lambda self, *args, **kwargs: PrivateWrapParent(getattr(self.obj, i)(*args, **kwargs), self.parent))
+    setattr(_PrivateWrap, i, _set_getting_attribute(i, _PrivateWrap))
+    setattr(_PrivateWrapParent, i, _set_getting_attribute(i, _PrivateWrapParent))
 
 
 def _get_all_possible_code(obj, _seen=None):
@@ -199,12 +204,12 @@ def _get_all_possible_code(obj, _seen=None):
         if obj.fdel is not None and hasattr(obj.fdel, "__code__"):
             yield obj.fdel.__code__
         return
+    if isinstance(obj, _PrivateWrap):
+        for i in obj.__func_list__:
+            if hasattr(i, "__code__"):
+                yield i.__code__
     if hasattr(obj, "__func__"):
-        if isinstance(obj, PrivateWrap):
-            for i in obj.__func__:
-                if hasattr(i, "__code__"):
-                    yield i.__code__
-        elif hasattr(obj.__func__, "__code__"):
+        if hasattr(obj.__func__, "__code__"):
             yield obj.__func__.__code__
             return
     return []
@@ -268,20 +273,20 @@ class PrivateAttrType(type):
                 del attrs[i]
                 need_update.append((i, original_value))
         original_getattribute = attrs.get("__getattribute__", None)
-        if isinstance(original_getattribute, PrivateWrap):
-            original_getattribute = original_getattribute.result
+        if isinstance(original_getattribute, _PrivateWrap):
+            original_getattribute = original_getattribute._private_result
         original_getattr = attrs.get("__getattr__", None)
-        if isinstance(original_getattr, PrivateWrap):
-            original_getattr = original_getattr.result
+        if isinstance(original_getattr, _PrivateWrap):
+            original_getattr = original_getattr._private_result
         original_setattr = attrs.get("__setattr__", None)
-        if isinstance(original_setattr, PrivateWrap):
-            original_setattr = original_setattr.result
+        if isinstance(original_setattr, _PrivateWrap):
+            original_setattr = original_setattr._private_result
         original_delattr = attrs.get("__delattr__", None)
-        if isinstance(original_delattr, PrivateWrap):
-            original_delattr = original_delattr.result
+        if isinstance(original_delattr, _PrivateWrap):
+            original_delattr = original_delattr._private_result
         original_del = attrs.get("__del__", None)
-        if isinstance(original_del, PrivateWrap):
-            original_del = original_del.result
+        if isinstance(original_del, _PrivateWrap):
+            original_del = original_del._private_result
         obj_attr_dict = {}
         type_attr_dict = cls._type_attr_dict
         type_allowed_code = cls._type_allowed_code
@@ -553,8 +558,8 @@ class PrivateAttrType(type):
         attrs["__private_attrs__"] = tuple(hash_private_list)
         all_items = attrs.items()
         for k, v in all_items:
-            if isinstance(v, PrivateWrap):
-                attrs[k] = v.result
+            if isinstance(v, _PrivateWrap):
+                attrs[k] = v._private_result
         type_instance = super().__new__(cls, name, bases, attrs)
         type_attr_dict[id(type_instance)] = {need_call(id(type_instance), "__private_attrs__"): tuple(
             (hashlib.sha256(i.encode("utf-8")).hexdigest(), 

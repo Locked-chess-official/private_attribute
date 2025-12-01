@@ -66,6 +66,7 @@ class MyClass(PrivateAttrBase):
         ...
 
     @method1.attr_name
+    @PrivateWrapProxy(lambda _: _) # use empty function to wrap
     def method1(self):
         ...
 
@@ -74,6 +75,7 @@ class MyClass(PrivateAttrBase):
         ...
 
     @method2.attr_name
+    @PrivateWrapProxy(lambda _: _)
     def method2(self):
         ...
 
