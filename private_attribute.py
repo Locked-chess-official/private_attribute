@@ -25,6 +25,9 @@ from types import FrameType
 import collections
 import string
 import threading
+import time
+
+_running_time = time.time()
 
 
 def _generate_private_attr_cache(mod, _cache={}, _lock=threading.Lock()):  #type: ignore
@@ -32,7 +35,7 @@ def _generate_private_attr_cache(mod, _cache={}, _lock=threading.Lock()):  #type
         def wrapper(obj_id: int, attr_name: str) -> str:
             with _lock:
                 combined = f"{obj_id}_{attr_name}".encode('utf-8')
-                attr_byte = attr_name.encode("utf-8")
+                attr_byte = f"{_running_time}_{attr_name}".encode("utf-8")
                 hash_obj = hashlib.sha256(combined)
                 attr_hash_obj = hashlib.sha256(attr_byte)
                 key = (obj_id, hash_obj.hexdigest(), attr_hash_obj.hexdigest())
@@ -114,7 +117,8 @@ class PrivateAttrType(type):
 
     @classmethod
     def _hash_private_attribute(cls, name: str) -> tuple[str]:
-        return hashlib.sha256(name.encode("utf-8")).hexdigest(), hashlib.sha256(f"{id(cls)}_{name}".encode("utf-8")).hexdigest()
+        return (hashlib.sha256(f"_{_running_time}_{name}".encode("utf-8")).hexdigest(),
+                hashlib.sha256(f"{id(cls)}_{name}".encode("utf-8")).hexdigest())
 
     def __new__(cls, name: str, bases: tuple[type], attrs: dict[str, Any],
                 private_func: Callable[[int, str], str] | None=None):
