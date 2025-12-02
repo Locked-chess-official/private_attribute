@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "private_attribute"
-version = "2.5.3"
+version = "2.5.4"
 description = "Private attribute decorator for Python classes"
 readme = "README.md"
 license = {text = "MIT"}

@@ -48,6 +48,11 @@ def _generate_private_attr_cache(mod, _cache={}, _lock=threading.Lock()):  #type
                         i += 1
                         result = original_result + f"_{i}"
                     _cache[key] = result
+                _original_cache = _cache.copy()
+                _cache.clear()
+                keys = sorted(_original_cache.keys(), key=lambda x: x[1:])
+                for i in keys:
+                    _cache[i] = _original_cache[i]
                 return _cache[key]
 
         return wrapper
@@ -114,6 +119,13 @@ def _get_all_possible_code(obj):
     return []
 
 
+def _resortkey(x: dict):
+    original_x = x.copy()
+    x.clear()
+    keys = sorted(original_x.keys())
+    for i in keys:
+        x[i] = original_x[i]
+
 class PrivateAttrType(type):
     _type_attr_dict = {}
     _type_allowed_code = {}
@@ -148,7 +160,7 @@ class PrivateAttrType(type):
         for i in private_attr_list:
             hash_private_list.append(cls._hash_private_attribute(change_name(i)))
 
-        hash_private_list = tuple(hash_private_list)
+        hash_private_list = tuple(sorted(hash_private_list))
         invalid_names = [
             "__private_attrs__",
             "__name__",
@@ -182,6 +194,7 @@ class PrivateAttrType(type):
                     original_value = attrs[change_name(i)]
                     del attrs[change_name(i)]
                 need_update.append((change_name(i), original_value))
+        random.shuffle(all_allowed_attrs)
         original_getattribute = attrs.get("__getattribute__", None)
         if _CONTROL_FOR_CHECK and isinstance(original_getattribute, _PrivateWrap):
             original_getattribute = original_getattribute.result
@@ -221,16 +234,26 @@ class PrivateAttrType(type):
             for i in type_instance.__mro__[1:]:
                 if isinstance(i, cls):
                     code_list += list(type_allowed_code[id(i)])
-            if frame.f_code in code_list:
-                return True
-            if frame.f_code in (
+            code_list += [
                 __getattribute__.__code__,
                 __getattr__.__code__,
                 __setattr__.__code__,
                 __delattr__.__code__,
                 __del__.__code__,
-            ):
+            ]
+            if frame.f_code in code_list:
                 return True
+            module = inspect.getmodule(frame)
+            clsmodule = inspect.getmodule(cls)
+            if module is clsmodule:
+                if frame.f_code.co_qualname in (
+                    __getattribute__.__code__.co_qualname,
+                    __getattr__.__code__.co_qualname,
+                    __setattr__.__code__.co_qualname,
+                    __delattr__.__code__.co_qualname,
+                    __del__.__code__.co_qualname,
+                ):
+                    return True
             all_possible_local = []
             for i in code_list:
                 if not hasattr(i, "co_qualname"):
@@ -371,6 +394,7 @@ class PrivateAttrType(type):
                                 return
                         private_attr_name = need_call(id(self), attr)
                         obj_attr_dict[id(self)][private_attr_name] = value
+                        _resortkey(obj_attr_dict[id(self)])
                     else:
                         raise AttributeError(f"cannot set private attribute '{attr}' to '{type_instance.__name__}' object",
                                             name=attr,
@@ -516,19 +540,45 @@ class PrivateAttrType(type):
                 value_i.__set_name__(type_instance, new_attr)
         return type_instance
 
+
     def _is_class_code(cls, frame: FrameType):
         if frame is None:
             return False
         if frame.f_code.co_name == "<module>":
             return False
+        all_possible_local = []
         code_list = PrivateAttrType._type_allowed_code.get(id(cls), ())
+        for i in code_list:
+            if not hasattr(i, "co_qualname"):
+                continue
+            if frame.f_code.co_qualname.startswith(i.co_qualname):
+                all_possible_local.append(i)
         if frame.f_code in code_list:
             return True
         for icls in cls.__mro__[1:]:
             code_list = PrivateAttrType._type_allowed_code.get(id(icls), ())
+            for i in code_list:
+                if not hasattr(i, "co_qualname"):
+                    continue
+                if frame.f_code.co_qualname.startswith(i.co_qualname):
+                    all_possible_local.append(i)
             if frame.f_code in code_list:
                 return True
+        if not all_possible_local:
+            return False
+        while frame:
+            frame = frame.f_back
+            if frame is None:
+                return False
+            if frame.f_code in all_possible_local:
+                return True
+            for i in all_possible_local:
+                if frame.f_code.co_qualname.startswith(i.co_qualname):
+                    break
+            else:
+                return False
         return False
+
 
     def __getattribute__(cls, attr):
         try:
@@ -632,6 +682,7 @@ class PrivateAttrType(type):
                 if caller_cls is not None and issubclass(caller_cls, cls):
                     private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
                     PrivateAttrType._type_attr_dict[id(cls)][private_attr_name] = value
+                    _resortkey(PrivateAttrType._type_attr_dict[id(cls)])
                 else:
                     raise AttributeError(f"cannot set private attribute '{attr}' to class '{cls.__name__}'",
                                         name=attr,
