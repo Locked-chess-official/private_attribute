@@ -172,8 +172,12 @@ class PrivateAttrType(type):
             if i in type_slots:
                 raise TypeError("'__private_attrs__' cannot contain the attribute name in '__slots__'")
             if i in attrs or change_name(i) in attrs:
-                original_value = attrs[i]
-                del attrs[i]
+                if i in attrs:
+                    original_value = attrs[i]
+                    del attrs[i]
+                else:
+                    original_value = attrs[change_name(i)]
+                    del attrs[change_name(i)]
                 need_update.append((change_name(i), original_value))
         original_getattribute = attrs.get("__getattribute__", None)
         if _CONTROL_FOR_CHECK and isinstance(original_getattribute, _PrivateWrap):
