@@ -108,6 +108,9 @@ def _get_all_possible_code(obj):
         if hasattr(obj.__func__, "__code__"):
             yield obj.__func__.__code__
             return
+    if isinstance(obj, (functools.partial, functools.partialmethod)):
+        if hasattr(obj.func, "__code__"):
+            yield obj.func.__code__
     return []
 
 
@@ -228,6 +231,25 @@ class PrivateAttrType(type):
                 __del__.__code__,
             ):
                 return True
+            all_possible_local = []
+            for i in code_list:
+                if not hasattr(i, "co_qualname"):
+                    continue
+                if frame.f_code.co_qualname.startswith(i.co_qualname):
+                    all_possible_local.append(i)
+            if not all_possible_local:
+                return False
+            while frame:
+                frame = frame.f_back
+                if frame is None:
+                    return False
+                if frame.f_code in all_possible_local:
+                    return True
+                for i in all_possible_local:
+                    if frame.f_code.co_qualname.startswith(i.co_qualname):
+                        break
+                else:
+                    return False
             return False
 
         def __getattribute__(self, attr):
