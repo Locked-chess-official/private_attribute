@@ -538,6 +538,7 @@ class PrivateAttrType(type):
             type_attr_dict[id(type_instance)][new_attr] = value_i
             if hasattr(value_i, "__set_name__"):
                 value_i.__set_name__(type_instance, new_attr)
+        _resortkey(type_attr_dict[id(type_instance)])
         return type_instance
 
 
@@ -553,6 +554,10 @@ class PrivateAttrType(type):
                 continue
             if frame.f_code.co_qualname.startswith(i.co_qualname):
                 all_possible_local.append(i)
+        code_list += [
+            getattr(PrivateAttrType, i).__code__ for i in 
+            ("__getattribute__", "__getattr__", "__setattr__", "__delattr__", "__del__")
+        ]
         if frame.f_code in code_list:
             return True
         for icls in cls.__mro__[1:]:
