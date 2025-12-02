@@ -46,3 +46,6 @@ class _PrivateWrap:
     def __init__(self, decorator, func, original_func: list[Callable]):
         self.__func_list__ = original_func
         self._private_result = decorator(func)
+
+    @property
+    def result(self) -> Any: ...

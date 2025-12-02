@@ -87,113 +87,9 @@ def _generate_private_attr_name(obj_id: int, attr_name: str) -> str:
 _clear_obj = _generate_private_attr_cache("clean")
 
 
-class PrivateWrapProxy:
-    """
-    The proxy class for the private attribute decorator.
-    It can ensure that the original function will be saved.
-    """
-    def __init__(self, decorator):
-        self.decorator = decorator
-
-    def __call__(self, func):
-        if isinstance(func, _PrivateWrap):
-            return _PrivateWrap(self.decorator, func._private_result, func.__func_list__)
-        return _PrivateWrap(self.decorator, func, [func])
 
 
-class _PrivateWrapParent:
-    def __init__(self, obj, parent: _PrivateWrap):
-        self._private_obj = obj
-        self._private_parent = parent
-
-    def __getattr__(self, name):
-        return _PrivateWrapParent(getattr(self._private_obj, name), self._private_parent)
-
-    def __call__(self, *args, **kwargs):
-        if len(args) == 1 and len(kwargs) == 0:
-            var = args[0]
-            if isinstance(var, _PrivateWrap):
-                self._private_obj = self._private_parent._private_result = self._private_obj(var._private_result)
-                self._private_parent.__func_list__.extend(var.__func_list__)
-                functools.update_wrapper(self._private_parent, self._private_parent.__func_list__[-1])
-                return self._private_parent
-            self._private_obj = self._private_parent._private_result = self._private_obj(*args, **kwargs)
-            return self
-        else:
-            self._private_obj = self._private_parent._private_result = self._private_obj(*args, **kwargs)
-            return self
-
-    def __getitem__(self, name):
-        return _PrivateWrapParent(self._private_obj.__getitem__(name), self._private_parent)
-
-
-class _PrivateWrap:
-    def __init__(self, decorator, func, original_func: list[Callable]):
-        self.__func_list__ = original_func
-        self._private_result = decorator(func)
-        functools.update_wrapper(self, original_func)
-
-    def __call__(self, *args, **kwargs):
-        return self._private_result(*args, **kwargs)
-
-    def __get__(self, instance, owner):
-        if hasattr(self._private_result, "__get__"):
-            return self._private_result.__get__(instance, owner)
-        return self._private_result
-
-    def __set__(self, instance, value):
-        if hasattr(self._private_result, "__set__"):
-            return self._private_result.__set__(instance, value)
-
-    def __delete__(self, instance):
-        if hasattr(self._private_result, "__delete__"):
-            return self._private_result.__delete__(instance)
-
-    def __getattr__(self, name):
-        return _PrivateWrapParent(getattr(self._private_result, name), self)
-
-    def __set_name__(self, owner, name):
-        if hasattr(self._private_result, "__set_name__"):
-            self._private_result.__set_name__(owner, name)
-
-    def __wrapped__(self):
-        return self._private_result
-
-    def __getitem__(self, name):
-        return _PrivateWrapParent(self._private_result.__getitem__(name), self)
-
-
-_FORWARD_DUNDERS = [
-    "__iter__", "__next__", "__len__", "__contains__", "__str__", "__repr__", 
-    "__bool__", "__bytes__", "__format__", "__hash__", "__eq__", "__ne__", "__lt__",
-    "__le__", "__gt__", "__ge__", "__add__", "__radd__", "__sub__", "__rsub__",
-    "__mul__", "__rmul__", "__matmul__", "__rmatmul__", "__truediv__", "__rtruediv__",
-    "__floordiv__", "__rfloordiv__", "__mod__", "__rmod__", "__pow__", "__rpow__",
-    "__lshift__", "__rlshift__", "__rshift__", "__rrshift__", "__and__", "__rand__",
-    "__xor__", "__rxor__", "__or__", "__ror__", "__neg__", "__pos__", "__abs__",
-    "__invert__", "__round__", "__index__", "__enter__", "__exit__", "__aiter__",
-    "__anext__", "__await__"]
-
-def _set_getting_attribute(i, cls):
-    def _privatewrap_function(self: _PrivateWrap, *args, **kwargs):
-        return _PrivateWrapParent(getattr(self._private_result, i)(*args, **kwargs), self)
-    def _privatewrapparent_function(self: _PrivateWrapParent, *args, **kwargs):
-        return _PrivateWrapParent(getattr(self._private_obj, i)(*args, **kwargs), self._private_parent)
-    if cls is _PrivateWrap:
-        return _privatewrap_function
-    return _privatewrapparent_function
-
-for i in _FORWARD_DUNDERS:
-    setattr(_PrivateWrap, i, _set_getting_attribute(i, _PrivateWrap))
-    setattr(_PrivateWrapParent, i, _set_getting_attribute(i, _PrivateWrapParent))
-
-
-def _get_all_possible_code(obj, _seen=None):
-    if _seen is None:
-        _seen = set()
-    if id(obj) in _seen:
-        return []
-    _seen.add(id(obj))
+def _get_all_possible_code(obj):
     if not hasattr(obj, "__get__") and not hasattr(obj, "__call__"):
         return []
     if isinstance(obj, property):
@@ -204,8 +100,8 @@ def _get_all_possible_code(obj, _seen=None):
         if obj.fdel is not None and hasattr(obj.fdel, "__code__"):
             yield obj.fdel.__code__
         return
-    if isinstance(obj, _PrivateWrap):
-        for i in obj.__func_list__:
+    if _CONTROL_FOR_CHECK and isinstance(obj, _PrivateWrap):
+        for i in obj._func_list:
             if hasattr(i, "__code__"):
                 yield i.__code__
     if hasattr(obj, "__func__"):
@@ -227,6 +123,11 @@ class PrivateAttrType(type):
 
     def __new__(cls, name: str, bases: tuple[type], attrs: dict[str, Any],
                 private_func: Callable[[int, str], str] | None=None):
+        def change_name(i: str):
+            if i.startswith("__") and not i.endswith("__"):
+                return f"_{name}{i}"
+            return i
+
         type_slots = attrs.get("__slots__", ())
         if "__private_attrs__" not in attrs:
             raise TypeError("'__private_attrs__' is required in PrivateAttrType")
@@ -239,10 +140,12 @@ class PrivateAttrType(type):
             if isinstance(i, cls):
                 history_private_attrs += list(i.__private_attrs__)
 
+        history_private_attrs = tuple(set(history_private_attrs))
         hash_private_list = []
         for i in private_attr_list:
-            hash_private_list.append(cls._hash_private_attribute(i))
+            hash_private_list.append(cls._hash_private_attribute(change_name(i)))
 
+        hash_private_list = tuple(hash_private_list)
         invalid_names = [
             "__private_attrs__",
             "__name__",
@@ -268,25 +171,25 @@ class PrivateAttrType(type):
                 raise TypeError(f"'__private_attrs__' should only contain string elements, not '{type(i).__name__}'")
             if i in type_slots:
                 raise TypeError("'__private_attrs__' cannot contain the attribute name in '__slots__'")
-            if i in attrs:
+            if i in attrs or change_name(i) in attrs:
                 original_value = attrs[i]
                 del attrs[i]
-                need_update.append((i, original_value))
+                need_update.append((change_name(i), original_value))
         original_getattribute = attrs.get("__getattribute__", None)
-        if isinstance(original_getattribute, _PrivateWrap):
-            original_getattribute = original_getattribute._private_result
+        if _CONTROL_FOR_CHECK and isinstance(original_getattribute, _PrivateWrap):
+            original_getattribute = original_getattribute.result
         original_getattr = attrs.get("__getattr__", None)
-        if isinstance(original_getattr, _PrivateWrap):
-            original_getattr = original_getattr._private_result
+        if _CONTROL_FOR_CHECK and isinstance(original_getattr, _PrivateWrap):
+            original_getattr = original_getattr.result
         original_setattr = attrs.get("__setattr__", None)
-        if isinstance(original_setattr, _PrivateWrap):
-            original_setattr = original_setattr._private_result
+        if _CONTROL_FOR_CHECK and isinstance(original_setattr, _PrivateWrap):
+            original_setattr = original_setattr.result
         original_delattr = attrs.get("__delattr__", None)
-        if isinstance(original_delattr, _PrivateWrap):
-            original_delattr = original_delattr._private_result
+        if _CONTROL_FOR_CHECK and isinstance(original_delattr, _PrivateWrap):
+            original_delattr = original_delattr.result
         original_del = attrs.get("__del__", None)
-        if isinstance(original_del, _PrivateWrap):
-            original_del = original_del._private_result
+        if _CONTROL_FOR_CHECK and isinstance(original_del, _PrivateWrap):
+            original_del = original_del.result
         obj_attr_dict = {}
         type_attr_dict = cls._type_attr_dict
         type_allowed_code = cls._type_allowed_code
@@ -411,9 +314,6 @@ class PrivateAttrType(type):
                 for all_subtype in type_instance.__mro__[1:]:
                     if hasattr(all_subtype, "__getattr__"):
                         result = all_subtype.__getattr__(self, attr)
-                        if hasattr(result, "__code__"):
-                            if result.__code__ not in type_allowed_code[id(type_instance)]:
-                                type_allowed_code[id(type_instance)] += (result.__code__,)
                         return result
                 raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
                                     name=attr,
@@ -570,12 +470,12 @@ class PrivateAttrType(type):
         attrs["__private_attrs__"] = tuple(hash_private_list)
         all_items = attrs.items()
         for k, v in all_items:
-            if isinstance(v, _PrivateWrap):
-                attrs[k] = v._private_result
+            if _CONTROL_FOR_CHECK and isinstance(v, _PrivateWrap):
+                attrs[k] = v.result
         type_instance = super().__new__(cls, name, bases, attrs)
         type_attr_dict[id(type_instance)] = {need_call(id(type_instance), "__private_attrs__"): tuple(
-            (hashlib.sha256(i.encode("utf-8")).hexdigest(), 
-             hashlib.sha256(f"{id(type_instance)}_{i}".encode("utf-8")).hexdigest())
+            (hashlib.sha256(change_name(i).encode("utf-8")).hexdigest(), 
+             hashlib.sha256(f"{id(type_instance)}_{change_name(i)}".encode("utf-8")).hexdigest())
             for i in private_attr_list
         )}
         type_allowed_code[id(type_instance)] = tuple(all_code)
@@ -583,8 +483,8 @@ class PrivateAttrType(type):
         for i in need_update:
             new_attr = need_call(id(type_instance), i[0])
             value_i = i[1]
-            if isinstance(value_i, _PrivateWrap):
-                value_i = value_i._private_result
+            if _CONTROL_FOR_CHECK and isinstance(value_i, _PrivateWrap):
+                value_i = value_i.result
             type_attr_dict[id(type_instance)][new_attr] = value_i
             if hasattr(value_i, "__set_name__"):
                 value_i.__set_name__(type_instance, new_attr)
@@ -796,6 +696,9 @@ class PrivateAttrType(type):
         raise TypeError("Cannot unpickle PrivateAttrType classes")
 
 
+_CONTROL_FOR_CHECK = False
+
+
 class PrivateAttrBase(metaclass=PrivateAttrType):
     """
     The base class for creating classes with private attributes.
@@ -803,6 +706,146 @@ class PrivateAttrBase(metaclass=PrivateAttrType):
     """
     __private_attrs__: list[str] | tuple[str] = ()
     __slots__ = ()
+
+class PrivateWrapProxy(PrivateAttrBase):
+    """
+    The proxy class for the private attribute decorator.
+    It can ensure that the original function will be saved.
+    """
+    __private_attrs__ = ["_decorator", "_func_list"]
+    __slots__ = ()
+    def __init__(self, decorator, _original_decorator=None):
+        self._decorator = decorator
+        if isinstance(_original_decorator, _PrivateWrap):
+            self._func_list = _original_decorator._func_list
+        elif isinstance(_original_decorator, _PrivateWrapParent):
+            self._func_list = _original_decorator._private_parent._func_list
+        else:
+            self._func_list = []
+
+    def __call__(self, func):
+        if isinstance(func, _PrivateWrap):
+            return _PrivateWrap(self._decorator, func.result, func._func_list + self._func_list)
+        return _PrivateWrap(self._decorator, func, [func] + self._func_list)
+
+
+class _PrivateWrapParent(PrivateAttrBase):
+    __private_attrs__ = ["_private_obj", "_private_parent"]
+    __slots__ = ()
+    def __init__(self, obj, parent: _PrivateWrap):
+        self._private_obj = obj
+        self._private_parent = parent
+
+    def __getattr__(self, name):
+        self._private_obj = getattr(self._private_obj, name)
+        return self
+
+    def __call__(self, *args, **kwargs):
+        if len(args) == 1 and len(kwargs) == 0:
+            var = args[0]
+            if isinstance(var, _PrivateWrap):
+                self._private_obj = self._private_parent._result = self._private_obj(var.result)
+                self._private_parent._func_list.extend(var._func_list)
+                return self._private_parent
+            self._private_obj = self._private_parent._result = self._private_obj(*args, **kwargs)
+            return self
+        else:
+            self._private_obj = self._private_parent._result = self._private_obj(*args, **kwargs)
+            return self
+
+    def __getitem__(self, name):
+        self._private_obj = self._private_obj.__getitem__(name)
+        return self
+
+    @property
+    def result(self):
+        return self._private_obj
+
+    @result.setter
+    def _result(self, value):
+        self._private_obj = value
+
+    @property
+    def _parent(self):
+        return self._private_parent
+
+
+class _PrivateWrap(PrivateAttrBase):
+    __private_attrs__ = ["_private_result", "__func_list__"]
+    __slots__ = ()
+    def __init__(self, decorator, func, original_func: list[Callable]):
+        self.__func_list__ = original_func
+        self._private_result = decorator(func)
+
+    def __call__(self, *args, **kwargs):
+        return self._private_result(*args, **kwargs)
+
+    def __get__(self, instance, owner):
+        if hasattr(self._private_result, "__get__"):
+            return self._private_result.__get__(instance, owner)
+        return self._private_result
+
+    def __set__(self, instance, value):
+        if hasattr(self._private_result, "__set__"):
+            return self._private_result.__set__(instance, value)
+
+    def __delete__(self, instance):
+        if hasattr(self._private_result, "__delete__"):
+            return self._private_result.__delete__(instance)
+
+    def __getattr__(self, name):
+        return _PrivateWrapParent(getattr(self._private_result, name), self)
+
+    def __set_name__(self, owner, name):
+        if hasattr(self._private_result, "__set_name__"):
+            self._private_result.__set_name__(owner, name)
+
+    def __wrapped__(self):
+        return self._private_result
+
+    def __getitem__(self, name):
+        return _PrivateWrapParent(self._private_result.__getitem__(name), self)
+
+    @property
+    def result(self):
+        return self._private_result
+
+    @result.setter
+    def _result(self, value):
+        self._private_result = value
+
+    @property
+    def _func_list(self):
+        return self.__func_list__
+
+
+_FORWARD_DUNDERS = [
+    "__iter__", "__next__", "__len__", "__contains__",
+    "__add__", "__radd__", "__sub__", "__rsub__",
+    "__mul__", "__rmul__", "__matmul__", "__rmatmul__",
+    "__truediv__", "__rtruediv__", "__floordiv__", "__rfloordiv__",
+    "__mod__", "__rmod__", "__pow__", "__rpow__",
+    "__lshift__", "__rlshift__", "__rshift__", "__rrshift__",
+    "__and__", "__rand__", "__xor__", "__rxor__", "__or__", "__ror__",
+    "__neg__", "__pos__", "__abs__", "__invert__", "__round__", "__index__",
+    "__enter__", "__exit__", "__aiter__", "__anext__", "__await__"
+]
+
+def _set_getting_attribute(i):
+    def _privatewrap_function(self: _PrivateWrap, *args, **kwargs):
+        return _PrivateWrapParent(getattr(self.result, i)(*args, **kwargs), self)
+    def _privatewrapparent_function(self: _PrivateWrapParent, *args, **kwargs):
+        self._result = getattr(self.result, i)(*args, **kwargs)
+        return self
+
+    setattr(_PrivateWrap, i, _privatewrap_function)
+    setattr(_PrivateWrapParent, i, _privatewrapparent_function)
+
+for i in _FORWARD_DUNDERS:
+    _set_getting_attribute(i)
+
+
+_CONTROL_FOR_CHECK = True
 
 
 if __name__ == "__main__":
