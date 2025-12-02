@@ -104,27 +104,27 @@ class PrivateWrapProxy:
 class _PrivateWrapParent:
     def __init__(self, obj, parent: _PrivateWrap):
         self._private_obj = obj
-        self.parent = parent
+        self._private_parent = parent
 
     def __getattr__(self, name):
-        return _PrivateWrapParent(getattr(self._private_obj, name), self.parent)
+        return _PrivateWrapParent(getattr(self._private_obj, name), self._private_parent)
 
     def __call__(self, *args, **kwargs):
         if len(args) == 1 and len(kwargs) == 0:
             var = args[0]
             if isinstance(var, _PrivateWrap):
-                self._private_obj = self.parent._private_result = self._private_obj(var._private_result)
-                self.parent.__func_list__.extend(var.__func_list__)
-                functools.update_wrapper(self.parent, self.parent.__func_list__[-1])
-                return self.parent
-            self._private_obj = self.parent._private_result = self._private_obj(*args, **kwargs)
+                self._private_obj = self._private_parent._private_result = self._private_obj(var._private_result)
+                self._private_parent.__func_list__.extend(var.__func_list__)
+                functools.update_wrapper(self._private_parent, self._private_parent.__func_list__[-1])
+                return self._private_parent
+            self._private_obj = self._private_parent._private_result = self._private_obj(*args, **kwargs)
             return self
         else:
-            self._private_obj = self.parent._private_result = self._private_obj(*args, **kwargs)
+            self._private_obj = self._private_parent._private_result = self._private_obj(*args, **kwargs)
             return self
 
     def __getitem__(self, name):
-        return _PrivateWrapParent(self._private_obj.__getitem__(name), self.parent)
+        return _PrivateWrapParent(self._private_obj.__getitem__(name), self._private_parent)
 
 
 class _PrivateWrap:
@@ -178,7 +178,7 @@ def _set_getting_attribute(i, cls):
     def _privatewrap_function(self: _PrivateWrap, *args, **kwargs):
         return _PrivateWrapParent(getattr(self._private_result, i)(*args, **kwargs), self)
     def _privatewrapparent_function(self: _PrivateWrapParent, *args, **kwargs):
-        return _PrivateWrapParent(getattr(self._private_obj, i)(*args, **kwargs), self.parent)
+        return _PrivateWrapParent(getattr(self._private_obj, i)(*args, **kwargs), self._private_parent)
     if cls is _PrivateWrap:
         return _privatewrap_function
     return _privatewrapparent_function
@@ -371,7 +371,7 @@ class PrivateAttrType(type):
                                 return obj_attr_dict[id(self)][private_attr_name]
                             except KeyError:
                                 try:
-                                    if cls._type_attr_dict.get(id(type_instance), None) is not None:
+                                    if id(type_instance) in cls._type_attr_dict:
                                         attribute = cls._type_attr_dict[id(type_instance)][private_attr_name]
                                     else:
                                         raise KeyError(id(type_instance))
@@ -437,6 +437,12 @@ class PrivateAttrType(type):
                                             name=attr,
                                             obj=self)
                     if caller_self is not None and isinstance(caller_self, type_instance):
+                        if id(type_instance) in cls._type_attr_dict:
+                            private_attr_name = need_call(id(type_instance), attr)
+                            attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
+                            if hasattr(attribute, "__set__"):
+                                attribute.__set__(self, value)
+                                return
                         private_attr_name = need_call(id(self), attr)
                         obj_attr_dict[id(self)][private_attr_name] = value
                     else:
@@ -484,6 +490,12 @@ class PrivateAttrType(type):
                             name=attr,
                             obj=self)
                     if caller_self is not None and isinstance(caller_self, type_instance):
+                        if id(type_instance) in cls._type_attr_dict:
+                            private_attr_name = need_call(id(type_instance), attr)
+                            attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
+                            if hasattr(attribute, "__delete__"):
+                                attribute.__delete__(self)
+                                return
                         private_attr_name = need_call(id(self), attr)
                         try:
                             del obj_attr_dict[id(self)][private_attr_name]
@@ -572,9 +584,10 @@ class PrivateAttrType(type):
             new_attr = need_call(id(type_instance), i[0])
             value_i = i[1]
             if isinstance(value_i, _PrivateWrap):
-                type_attr_dict[id(type_instance)][new_attr] = value_i._private_result
-            else:
-                type_attr_dict[id(type_instance)][new_attr] = value_i
+                value_i = value_i._private_result
+            type_attr_dict[id(type_instance)][new_attr] = value_i
+            if hasattr(value_i, "__set_name__"):
+                value_i.__set_name__(type_instance, new_attr)
         return type_instance
 
     def _is_class_code(cls, frame: FrameType):
