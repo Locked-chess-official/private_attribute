@@ -554,10 +554,10 @@ class PrivateAttrType(type):
                 continue
             if frame.f_code.co_qualname.startswith(i.co_qualname):
                 all_possible_local.append(i)
-        code_list += [
+        code_list += tuple(
             getattr(PrivateAttrType, i).__code__ for i in 
             ("__getattribute__", "__getattr__", "__setattr__", "__delattr__", "__del__")
-        ]
+        )
         if frame.f_code in code_list:
             return True
         for icls in cls.__mro__[1:]:
