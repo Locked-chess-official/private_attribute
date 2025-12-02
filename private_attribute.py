@@ -505,18 +505,21 @@ class PrivateAttrType(type):
         return False
 
     def __getattribute__(cls, attr):
-        if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
-            hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
-                PrivateAttrType._type_attr_dict[id(cls)][
-                    PrivateAttrType._type_need_call[id(cls)](id(cls), "__private_attrs__")]:
-            raise AttributeError()
-        for icls in type.__getattribute__(cls, "__mro__")[1:]:
-            if id(icls) in PrivateAttrType._type_attr_dict:
-                if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
-                    hashlib.sha256(f"{id(icls)}_{attr}".encode("utf-8")).hexdigest()) in \
-                        PrivateAttrType._type_attr_dict[id(icls)][
-                            PrivateAttrType._type_need_call[id(icls)](id(icls), "__private_attrs__")]:
-                    raise AttributeError()
+        try:
+            if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
+                hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
+                    PrivateAttrType._type_attr_dict[id(cls)][
+                        PrivateAttrType._type_need_call[id(cls)](id(cls), "__private_attrs__")]:
+                raise AttributeError()
+            for icls in type.__getattribute__(cls, "__mro__")[1:]:
+                if id(icls) in PrivateAttrType._type_attr_dict:
+                    if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
+                        hashlib.sha256(f"{id(icls)}_{attr}".encode("utf-8")).hexdigest()) in \
+                            PrivateAttrType._type_attr_dict[id(icls)][
+                                PrivateAttrType._type_need_call[id(icls)](id(icls), "__private_attrs__")]:
+                        raise AttributeError()
+        except KeyError:
+            pass
         result = super().__getattribute__(attr)
         return result
 
