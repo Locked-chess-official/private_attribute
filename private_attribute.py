@@ -92,7 +92,54 @@ def _generate_private_attr_name(obj_id: int, attr_name: str) -> str:
 _clear_obj = _generate_private_attr_cache("clean")
 
 
+def _register_local_code():
+    _all_id_code_in_code = {}
 
+    class DelControl:
+        def __init__(self, obj_id: int):
+            self.obj_id = obj_id
+
+        def __del__(self):
+            try:
+                del _all_id_code_in_code[self.obj_id]
+            except KeyError:
+                pass
+
+    def _register(typ: PrivateAttrType, decorator=lambda _: _, final_attr_name="_private_register"):
+        if not isinstance(typ, PrivateAttrType):
+            raise TypeError("typ must be a subclass of PrivateAttrType")
+        frame = inspect.currentframe().f_back
+        if not frame:
+            raise RuntimeError("Cannot find frame")
+        if frame.f_code.co_name == "<module>":
+            raise RuntimeError("Cannot register code: the last code is illegal")
+        code = frame.f_code
+        del frame
+
+        def wrapper(func):
+            if hasattr(func, final_attr_name):
+                raise RuntimeError("Cannot register code: func has this attr, please change")
+            if id(code) in _all_id_code_in_code:
+                setattr(func, final_attr_name, DelControl(id(func.__code__)))
+                _all_id_code_in_code[id(func.__code__)] = _all_id_code_in_code[id(code)]
+            all_code = []
+            for i in typ.__mro__:
+                if id(i) in PrivateAttrType._type_allowed_code:
+                    all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
+            if code not in all_code:
+                raise RuntimeError("Cannot register code: the last code is illegal")
+            setattr(func, final_attr_name, DelControl(id(func.__code__)))
+            _all_id_code_in_code[id(func.__code__)] = code
+            return decorator(func)
+
+        return wrapper
+
+    def _check(code):
+        return _all_id_code_in_code.get(id(code), None)
+
+    return _register, _check
+
+register_to_type, _check = _register_local_code()
 
 def _get_all_possible_code(obj):
     if not hasattr(obj, "__get__") and not hasattr(obj, "__call__"):
@@ -243,6 +290,10 @@ class PrivateAttrType(type):
             ]
             if frame.f_code in code_list:
                 return True
+            register_code = _check(frame.f_code)
+            if register_code is not None:
+                if register_code in code_list:
+                    return True
             module = inspect.getmodule(frame)
             clsmodule = inspect.getmodule(cls)
             if module is clsmodule:

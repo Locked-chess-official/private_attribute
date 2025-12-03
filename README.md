@@ -7,7 +7,8 @@ This package provide a way to create the private attribute like "C++" does.
 ## All API
 
 ```python
-from private_attribute import PrivateAttrBase, PrivateWrapProxy   # 1 Import public API
+from private_attribute import (PrivateAttrBase, PrivateWrapProxy
+                               register_to_type)                   # 1 Import public API
 
 def my_generate_func(obj_id, attr_name):                           # 2 Optional: custom name generator
     return f"_hidden_{obj_id}_{attr_name}"
@@ -30,6 +31,10 @@ class MyClass(PrivateAttrBase, private_func=my_generate_func):     # 3 Inherit +
     @PrivateWrapProxy(login_required())                            # 5 Stack as many as needed
     @PrivateWrapProxy(rate_limit(calls=10))                        # 5
     def expensive_api_call(self, x):                               # First definition (will be wrapped)
+        @register_to_type(type(self), some_decorator)              # 8 Register decorator to type
+        def inner(...):
+            return some_implementation(self.a, self.b, self.c, x)
+        inner(...)
         return heavy_computation(self.a, self.b, self.c, x)
 
     @expensive_api_call.non_conflict_attr_name1                    # 6 Easy access to internal names
@@ -63,6 +68,7 @@ print(obj.expensive_api_call(10))   # works with all decorators applied
 | 5 | @PrivateWrapProxy(...) | Make any decorator compatible with private attributes | When needed |
 | 6 | method.xxx | Normal api name proxy | Based on its api |
 | 7 | method.result.xxx chain + dummy wrap | Fix decorator order and name conflicts | When needed |
+| 8 | @register_to_type(type, [decorator, attrname]) | Register decorator to type (most use `type(self)` or `cls`) | When needed |
 
 ## Usage
 
@@ -175,6 +181,42 @@ class MyClass(PrivateAttrBase):
     @PrivateWrapProxy(decorator3())
     def method2(self):
 ```
+
+For inner function, you can use the `register_to_type` to register the decorator to the type.
+Here is the definition:
+
+```python
+def register_to_type(typ, decorator=lambda _: _, attrname="_private_register"):
+```
+
+then the code will be bound to the outer method:
+
+```python
+from private_attribute import PrivateAttrBase, PrivateWrapProxy, register_to_type
+
+class MyClass(PrivateAttrBase):
+    __private_attrs__ = ['a', 'b', 'c']
+    @PrivateWrapProxy(decorator1())
+    @PrivateWrapProxy(decorator2())
+    def method1(self):
+        ...
+
+        @register_to_type(type(self), decorator1())
+        def method1():
+            ...
+
+            @register_to_type(type(self), decorator2(), attrname)
+            def method1():
+                ...
+
+    @PrivateWrapProxy(decorator3())
+    def method2(self):
+        ...
+```
+
+The decorator and attrname are optional.It defaults "_private_register" .If the attrname has conflict with the decorator, you can change.
+
+`register_to_type` cannot use outside the class.
 
 ## Notes
 
