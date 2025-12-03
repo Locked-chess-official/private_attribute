@@ -278,6 +278,8 @@ class PrivateAttrType(type):
                 return False
             if frame.f_code.co_name == "<module>":
                 return False
+            elif frame.f_code.co_name in ('<genexpr>', '<listcomp>', '<setcomp>', '<dictcomp>'):
+                return is_class_frame(frame.f_back)
             code_list = list(type_allowed_code[id(type_instance)])
             for i in type_instance.__mro__[1:]:
                 if isinstance(i, cls):
@@ -599,6 +601,8 @@ class PrivateAttrType(type):
             return False
         if frame.f_code.co_name == "<module>":
             return False
+        elif frame.f_code.co_name in ('<genexpr>', '<listcomp>', '<setcomp>', '<dictcomp>'):
+            return PrivateAttrType._is_class_code(cls, frame.f_back)
         all_possible_local = []
         code_list = PrivateAttrType._type_allowed_code.get(id(cls), ())
         for i in code_list:
