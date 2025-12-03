@@ -122,6 +122,7 @@ def _register_local_code():
             if id(code) in _all_id_code_in_code:
                 setattr(func, final_attr_name, DelControl(id(func.__code__)))
                 _all_id_code_in_code[id(func.__code__)] = _all_id_code_in_code[id(code)]
+                return decorator(func)
             all_code = []
             for i in typ.__mro__:
                 if id(i) in PrivateAttrType._type_allowed_code:
