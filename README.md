@@ -227,7 +227,8 @@ The decorator and attrname are optional.It defaults "_private_register" .If the 
 - All of the object that is the instance of the class "PrivateAttrBase" or its subclass are default to be unable to be pickled.
 - Finally the attributes' names in `__private_attrs__` will be change to a tuple with two hash.
 - Finally the `_PrivateWrap` object will be recoveried to the original object.
-- One class in another class cannot use another class's private attribute.
+- One class defined in another class cannot use another class's private attribute.
+- One parent class defined an attribute which not in `__private_attrs__` or not a `PrivateAttrType` instance, the child class shouldn't contain the attribute in its `__private_attrs__`.
 
 ## License
 
