@@ -182,7 +182,7 @@ class MyClass(PrivateAttrBase):
     def method2(self):
 ```
 
-For inner function, you can use the `register_to_type` to register the decorator to the type.
+For inner function, its code is defaultly be added to the code list, and you can also use the `register_to_type` to register the decorator to the type.
 Here is the definition:
 
 ```python
@@ -217,6 +217,10 @@ class MyClass(PrivateAttrBase):
 The decorator and attrname are optional.It defaults "_private_register" .If the attrname has conflict with the decorator, you can change.
 
 `register_to_type` cannot use outside the class.
+
+The "attr_name" will be set as an attribute of the function object. You can change it by "attr_name=...". It will set a `DelControl` object to the function object, and when the function is deleted, the object's `__del__` will clean the register of the function code.
+
+In fact, you can use the `register_to_type` to register the function outside in the class method, but I don't recommend it.
 
 ## Notes
 

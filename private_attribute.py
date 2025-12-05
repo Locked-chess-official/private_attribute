@@ -22,7 +22,7 @@ import random
 import hashlib
 import inspect
 from typing import Any, Callable
-from types import FrameType
+from types import FrameType, CodeType
 import collections
 import string
 import threading
@@ -93,7 +93,7 @@ _clear_obj = _generate_private_attr_cache("clean")
 
 
 def _register_local_code():
-    _all_id_code_in_code = {}
+    _all_id_code_in_code: dict[int, list[CodeType]] = {}
 
     class DelControl:
         def __init__(self, obj_id: int):
@@ -130,13 +130,15 @@ def _register_local_code():
             if code not in all_code:
                 raise RuntimeError("Cannot register code: the last code is illegal")
             setattr(func, final_attr_name, DelControl(id(func.__code__)))
-            _all_id_code_in_code[id(func.__code__)] = code
+            if id(func.__code__) not in _all_id_code_in_code:
+                _all_id_code_in_code[id(func.__code__)] = []
+            _all_id_code_in_code[id(func.__code__)].append(code)
             return decorator(func)
 
         return wrapper
 
     def _check(code):
-        return _all_id_code_in_code.get(id(code), None)
+        return tuple(_all_id_code_in_code.get(id(code), []))
 
     return _register, _check
 
@@ -147,24 +149,37 @@ def _get_all_possible_code(obj):
         return []
     if isinstance(obj, property):
         if obj.fget is not None and hasattr(obj.fget, "__code__"):
-            yield obj.fget.__code__
+            yield from _get_code_from_code(obj.fget.__code__)
         if obj.fset is not None and hasattr(obj.fset, "__code__"):
-            yield obj.fset.__code__
+            yield from _get_code_from_code(obj.fset.__code__)
         if obj.fdel is not None and hasattr(obj.fdel, "__code__"):
-            yield obj.fdel.__code__
+            yield from _get_code_from_code(obj.fdel.__code__)
         return
     if _CONTROL_FOR_CHECK and isinstance(obj, _PrivateWrap):
         for i in obj._func_list:
             if hasattr(i, "__code__"):
-                yield i.__code__
+                yield from _get_code_from_code(i.__code__)
     if hasattr(obj, "__func__"):
         if hasattr(obj.__func__, "__code__"):
-            yield obj.__func__.__code__
+            yield from _get_code_from_code(obj.__func__.__code__)
             return
     if isinstance(obj, (functools.partial, functools.partialmethod)):
         if hasattr(obj.func, "__code__"):
-            yield obj.func.__code__
+            yield from _get_code_from_code(obj.func.__code__)
     return []
+
+def _get_code_from_code(code: CodeType, _seen=None):
+    if not isinstance(code, CodeType):
+        return []
+    if _seen is None:
+        _seen = set()
+    if id(code) in _seen:
+        return []
+    _seen.add(id(code))
+    yield code
+    for const in code.co_consts:
+        if isinstance(const, CodeType):
+            yield from _get_code_from_code(const, _seen)
 
 
 def _resortkey(x: dict):
@@ -195,7 +210,7 @@ class PrivateAttrType(type):
         if "__private_attrs__" not in attrs:
             raise TypeError("'__private_attrs__' is required in PrivateAttrType")
         private_attr_list = list(attrs.get('__private_attrs__', None))
-        if not isinstance(private_attr_list, 
+        if not isinstance(private_attr_list,
                           collections.abc.Sequence) or isinstance(private_attr_list, (str, bytes)):
             raise TypeError("'__private_attrs__' must be a sequence of the string")
         history_private_attrs = []
@@ -269,7 +284,8 @@ class PrivateAttrType(type):
         def get_all_code_objects():
             for i in all_allowed_attrs:
                 if hasattr(i, "__code__"):
-                    yield i.__code__
+                    if isinstance(i.__code__, CodeType):
+                        yield from _get_code_from_code(i.__code__)
                 if hasattr(i, "__get__"):
                     yield from _get_all_possible_code(i)
 
@@ -294,9 +310,10 @@ class PrivateAttrType(type):
             if frame.f_code in code_list:
                 return True
             register_code = _check(frame.f_code)
-            if register_code is not None:
-                if register_code in code_list:
-                    return True
+            if register_code:
+                for i in register_code:
+                    if i in code_list:
+                        return True
             module = inspect.getmodule(frame)
             clsmodule = inspect.getmodule(cls)
             if module is clsmodule:
