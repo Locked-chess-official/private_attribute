@@ -95,6 +95,7 @@ _clear_obj = _generate_private_attr_cache("clean")
 def _register_local_code():
     _all_id_code_in_code: dict[int, list[CodeType]] = {}
     _all_code_used_by_function: dict[int, list[int]] = {}
+    _all_code_lock = threading.Lock()
 
     class DelControl:
         def __init__(self, obj_id: int, func_id: int):
@@ -103,12 +104,13 @@ def _register_local_code():
 
         def __del__(self):
             try:
-                if self.func_id in _all_code_used_by_function.get(self.obj_id, []):
-                    _all_code_used_by_function[self.obj_id].remove(self.func_id)
-                if not _all_code_used_by_function[self.obj_id]:
-                    del _all_code_used_by_function[self.obj_id]
-                    del _all_id_code_in_code[self.obj_id]
-            except KeyError:
+                with _all_code_lock:
+                    if self.func_id in _all_code_used_by_function.get(self.obj_id, []):
+                        _all_code_used_by_function[self.obj_id].remove(self.func_id)
+                    if not _all_code_used_by_function[self.obj_id]:
+                        del _all_code_used_by_function[self.obj_id]
+                        del _all_id_code_in_code[self.obj_id]
+            except KeyError, ValueError:
                 pass
 
     def _register(typ: PrivateAttrType, decorator=lambda _: _, final_attr_name="_private_register"):
@@ -135,11 +137,12 @@ def _register_local_code():
             if id(code) in _all_id_code_in_code:
                 for i in func_code:
                     setattr(i, final_attr_name, DelControl(id(i.__code__), id(i)))
-                    _all_id_code_in_code[id(i.__code__)] = _all_id_code_in_code[id(code)].copy()
-                    if id(i.__code__) not in _all_code_used_by_function:
-                        _all_code_used_by_function[id(i.__code__)] = [id(i)]
-                    elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
-                        _all_code_used_by_function[id(i.__code__)].append(id(i))
+                    with _all_code_lock:
+                        _all_id_code_in_code[id(i.__code__)] = _all_id_code_in_code[id(code)].copy()
+                        if id(i.__code__) not in _all_code_used_by_function:
+                            _all_code_used_by_function[id(i.__code__)] = [id(i)]
+                        elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
+                            _all_code_used_by_function[id(i.__code__)].append(id(i))
                 return decorator(final_func)
             all_code = []
             for i in typ.__mro__:
@@ -149,20 +152,22 @@ def _register_local_code():
                 raise RuntimeError("Cannot register code: the last code is illegal")
             for i in func_code:
                 setattr(i, final_attr_name, DelControl(id(i.__code__), id(i)))
-                if id(i.__code__) not in _all_id_code_in_code:
-                    _all_id_code_in_code[id(i.__code__)] = []
-                if code not in _all_id_code_in_code[id(i.__code__)]:
-                    _all_id_code_in_code[id(i.__code__)].append(code)
-                if id(i.__code__) not in _all_code_used_by_function:
-                    _all_code_used_by_function[id(i.__code__)] = [id(i)]
-                elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
-                    _all_code_used_by_function[id(i.__code__)].append(id(i))
+                with _all_code_lock:
+                    if id(i.__code__) not in _all_id_code_in_code:
+                        _all_id_code_in_code[id(i.__code__)] = []
+                    if code not in _all_id_code_in_code[id(i.__code__)]:
+                        _all_id_code_in_code[id(i.__code__)].append(code)
+                    if id(i.__code__) not in _all_code_used_by_function:
+                        _all_code_used_by_function[id(i.__code__)] = [id(i)]
+                    elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
+                        _all_code_used_by_function[id(i.__code__)].append(id(i))
             return decorator(final_func)
 
         return wrapper
 
     def _check(code):
-        return tuple(_all_id_code_in_code.get(id(code), []))
+        with _all_code_lock:
+            return tuple(_all_id_code_in_code.get(id(code), []))
 
     def _unregister(typ):
         if not isinstance(typ, PrivateAttrType):
@@ -173,8 +178,9 @@ def _register_local_code():
                 all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
         def wrapper(func):
             code = func.__code__
-            _all_id_code_in_code[id(code)] = [i for i in _all_id_code_in_code[id(code)] if i not in all_code]
-            _all_code_used_by_function[id(code)] = [i for i in _all_code_used_by_function[id(code)] if i != id(func)]
+            with _all_code_lock:
+                if id(code) in _all_id_code_in_code:
+                    _all_id_code_in_code[id(code)] = [i for i in _all_id_code_in_code[id(code)] if i not in all_code]
             return func
         return wrapper
 
