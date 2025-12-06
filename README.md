@@ -222,7 +222,7 @@ The decorator and attrname are optional.It defaults "_private_register" .If the 
 
 The "attr_name" will be set as an attribute of the function object. You can change it by "attr_name=...". It will set a `DelControl` object to the function object, and when the function is deleted, the object's `__del__` will clean the register of the function code.
 
-In fact, you can use the `register_to_type` to register the function outside in the class method.
+In fact, you can use the `register_to_type` to register the function outside in the class method. If the outer function was decorated, you need to use `PrivateWrapProxy` to decorate it.
 
 To unregister the function, you can use the `unregister_to_type`.
 The definition is:

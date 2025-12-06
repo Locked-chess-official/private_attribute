@@ -117,24 +117,33 @@ def _register_local_code():
         del frame
 
         def wrapper(func):
-            if hasattr(func, final_attr_name):
-                raise RuntimeError("Cannot register code: func has this attr, please change")
+            if isinstance(func, _PrivateWrap):
+                final_func = func.result
+                func_code = func._func_list
+            else:
+                final_func = func
+                func_code = [func]
+            for i in func_code:
+                if hasattr(i, final_attr_name):
+                    raise RuntimeError(f"Cannot register code: It has attr {final_attr_name}")
             if id(code) in _all_id_code_in_code:
-                setattr(func, final_attr_name, DelControl(id(func.__code__)))
-                _all_id_code_in_code[id(func.__code__)] = _all_id_code_in_code[id(code)]
-                return decorator(func)
+                for i in func_code:
+                    setattr(i, final_attr_name, DelControl(id(i)))
+                    _all_id_code_in_code[id(i.__code__)] = _all_id_code_in_code[id(code)].copy()
+                return decorator(final_func)
             all_code = []
             for i in typ.__mro__:
                 if id(i) in PrivateAttrType._type_allowed_code:
                     all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
             if code not in all_code:
                 raise RuntimeError("Cannot register code: the last code is illegal")
-            setattr(func, final_attr_name, DelControl(id(func.__code__)))
-            if id(func.__code__) not in _all_id_code_in_code:
-                _all_id_code_in_code[id(func.__code__)] = []
-            if code not in _all_id_code_in_code[id(func.__code__)]:
-                _all_id_code_in_code[id(func.__code__)].append(code)
-            return decorator(func)
+            for i in func_code:
+                setattr(i, final_attr_name, DelControl(id(i.__code__)))
+                if id(i.__code__) not in _all_id_code_in_code:
+                    _all_id_code_in_code[id(i.__code__)] = []
+                if code not in _all_id_code_in_code[id(i.__code__)]:
+                    _all_id_code_in_code[id(i.__code__)].append(code)
+            return decorator(final_func)
 
         return wrapper
 
