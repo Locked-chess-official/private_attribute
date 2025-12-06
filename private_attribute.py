@@ -132,7 +132,8 @@ def _register_local_code():
             setattr(func, final_attr_name, DelControl(id(func.__code__)))
             if id(func.__code__) not in _all_id_code_in_code:
                 _all_id_code_in_code[id(func.__code__)] = []
-            _all_id_code_in_code[id(func.__code__)].append(code)
+            if code not in _all_id_code_in_code[id(func.__code__)]:
+                _all_id_code_in_code[id(func.__code__)].append(code)
             return decorator(func)
 
         return wrapper
@@ -140,9 +141,24 @@ def _register_local_code():
     def _check(code):
         return tuple(_all_id_code_in_code.get(id(code), []))
 
-    return _register, _check
+    def _unregister(typ):
+        if not isinstance(typ, PrivateAttrType):
+            raise TypeError("typ must be a subclass of PrivateAttrType")
+        all_code = []
+        for i in typ.__mro__:
+            if id(i) in PrivateAttrType._type_allowed_code:
+                all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
+        def wrapper(func):
+            code = func.__code__
+            for i in _all_id_code_in_code:
+                if code in _all_id_code_in_code[i]:
+                    _all_id_code_in_code[i].remove(code)
+            return func
+        return wrapper
 
-register_to_type, _check = _register_local_code()
+    return _register, _check, _unregister
+
+register_to_type, _check, unregister_to_type = _register_local_code()
 
 def _get_all_possible_code(obj):
     if not hasattr(obj, "__get__") and not hasattr(obj, "__call__"):
@@ -373,9 +389,6 @@ class PrivateAttrType(type):
             frame = inspect.currentframe()
             frame = frame.f_back
             try:
-                caller_locals = frame.f_locals
-                caller_self = caller_locals.get('self', None)
-                del caller_locals
                 if cls._hash_private_attribute(attr) in hash_private_list:
                     if id(self) not in obj_attr_dict:
                         obj_attr_dict[id(self)] = {}
@@ -383,51 +396,44 @@ class PrivateAttrType(type):
                         raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
                                             name=attr,
                                             obj=self)
-
-                    if caller_self is not None and isinstance(caller_self, type_instance):
+                    try:
+                        private_attr_name = need_call(id(self), attr)
+                        return obj_attr_dict[id(self)][private_attr_name]
+                    except KeyError:
+                        private_attr_name = need_call(id(type_instance), attr)
                         try:
-                            private_attr_name = need_call(id(self), attr)
                             return obj_attr_dict[id(self)][private_attr_name]
                         except KeyError:
-                            private_attr_name = need_call(id(type_instance), attr)
                             try:
-                                return obj_attr_dict[id(self)][private_attr_name]
-                            except KeyError:
-                                try:
-                                    if id(type_instance) in cls._type_attr_dict:
-                                        attribute = cls._type_attr_dict[id(type_instance)][private_attr_name]
-                                    else:
-                                        raise KeyError(id(type_instance))
-                                except KeyError:
-                                    raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
-                                                        name=attr,
-                                                        obj=self) from None
+                                if id(type_instance) in cls._type_attr_dict:
+                                    attribute = cls._type_attr_dict[id(type_instance)][private_attr_name]
                                 else:
-                                    if hasattr(attribute, "__get__"):
-                                        result = attribute.__get__(self, type_instance)
-                                        return result
-                                    else:
-                                        return attribute
-                    else:
-                        raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
-                                            name=attr,
-                                            obj=self)
+                                    raise KeyError(id(type_instance))
+                            except KeyError:
+                                raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
+                                                    name=attr,
+                                                    obj=self) from None
+                            else:
+                                if hasattr(attribute, "__get__"):
+                                    result = attribute.__get__(self, type_instance)
+                                    return result
+                                else:
+                                    return attribute
                 elif cls._hash_private_attribute(attr) in history_private_attrs:
                     if not is_class_frame(frame):
                         raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
                                             name=attr,
                                             obj=self)
-                    if caller_self is not None and isinstance(caller_self, type_instance):
-                        for all_subtype in type_instance.__mro__[1:]:
-                            if hasattr(all_subtype, "__getattr__") and isinstance(all_subtype, PrivateAttrType):
-                                try:
-                                    result = all_subtype.__getattr__(self, attr)
-                                    return result
-                                except AttributeError:
-                                    continue
-                        raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
-                                            name=attr,
-                                            obj=self)
+                    for all_subtype in type_instance.__mro__[1:]:
+                        if hasattr(all_subtype, "__getattr__") and isinstance(all_subtype, PrivateAttrType):
+                            try:
+                                result = all_subtype.__getattr__(self, attr)
+                                return result
+                            except AttributeError:
+                                continue
+                    raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
+                                        name=attr,
+                                        obj=self)
                 if original_getattr:
                     result = original_getattr(self, attr)
                     return result
@@ -440,15 +446,11 @@ class PrivateAttrType(type):
                                     obj=self)
             finally:
                 del frame
-                del caller_self
 
         def __setattr__(self, attr, value):
             frame = inspect.currentframe()
             frame = frame.f_back
             try:
-                caller_locals = frame.f_locals
-                caller_self = caller_locals.get('self', None)
-                del caller_locals
                 if cls._hash_private_attribute(attr) in hash_private_list:
                     if id(self) not in obj_attr_dict:
                         obj_attr_dict[id(self)] = {}
@@ -456,34 +458,24 @@ class PrivateAttrType(type):
                         raise AttributeError(f"cannot set private attribute '{attr}' to '{type_instance.__name__}' object",
                                             name=attr,
                                             obj=self)
-                    if caller_self is not None and isinstance(caller_self, type_instance):
-                        if id(type_instance) in cls._type_attr_dict:
-                            private_attr_name = need_call(id(type_instance), attr)
-                            attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
-                            if hasattr(attribute, "__set__"):
-                                attribute.__set__(self, value)
-                                return
-                        private_attr_name = need_call(id(self), attr)
-                        obj_attr_dict[id(self)][private_attr_name] = value
-                        _resortkey(obj_attr_dict[id(self)])
-                    else:
-                        raise AttributeError(f"cannot set private attribute '{attr}' to '{type_instance.__name__}' object",
-                                            name=attr,
-                                            obj=self)
+                    if id(type_instance) in cls._type_attr_dict:
+                        private_attr_name = need_call(id(type_instance), attr)
+                        attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
+                        if hasattr(attribute, "__set__"):
+                            attribute.__set__(self, value)
+                            return
+                    private_attr_name = need_call(id(self), attr)
+                    obj_attr_dict[id(self)][private_attr_name] = value
+                    _resortkey(obj_attr_dict[id(self)])
                 elif cls._hash_private_attribute(attr) in history_private_attrs:
                     if not is_class_frame(frame):
                         raise AttributeError(f"cannot set private attribute '{attr}' to '{type_instance.__name__}' object",
                                             name=attr,
                                             obj=self)
-                    if caller_self is not None and isinstance(caller_self, type_instance):
-                        for all_subtype in type_instance.__mro__[1:]:
-                            if hasattr(all_subtype, "__setattr__") and isinstance(all_subtype, PrivateAttrType):
-                                all_subtype.__setattr__(self, attr, value)
-                                break
-                    else:
-                        raise AttributeError(f"cannot set private attribute '{attr}' to '{type_instance.__name__}' object",
-                                            name=attr,
-                                            obj=self)
+                    for all_subtype in type_instance.__mro__[1:]:
+                        if hasattr(all_subtype, "__setattr__") and isinstance(all_subtype, PrivateAttrType):
+                            all_subtype.__setattr__(self, attr, value)
+                            break
                 elif original_setattr:
                     original_setattr(self, attr, value)
                 else:
@@ -493,15 +485,11 @@ class PrivateAttrType(type):
                             break
             finally:
                 del frame
-                del caller_self
 
         def __delattr__(self, attr):
             frame = inspect.currentframe()
             frame = frame.f_back
             try:
-                caller_locals = frame.f_locals
-                caller_self = caller_locals.get('self', None)
-                del caller_locals
                 if cls._hash_private_attribute(attr) in hash_private_list:
                     if id(self) not in obj_attr_dict:
                         obj_attr_dict[id(self)] = {}
@@ -510,44 +498,32 @@ class PrivateAttrType(type):
                             f"cannot delete private attribute '{attr}' on '{type_instance.__name__}' object",
                             name=attr,
                             obj=self)
-                    if caller_self is not None and isinstance(caller_self, type_instance):
-                        if id(type_instance) in cls._type_attr_dict:
-                            private_attr_name = need_call(id(type_instance), attr)
-                            attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
-                            if hasattr(attribute, "__delete__"):
-                                attribute.__delete__(self)
-                                return
-                        private_attr_name = need_call(id(self), attr)
-                        try:
-                            del obj_attr_dict[id(self)][private_attr_name]
-                        except KeyError:
-                            raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
-                                                name=attr,
-                                                obj=self) from None
-                    else:
-                        raise AttributeError(
-                            f"cannot delete private attribute '{attr}' on '{type_instance.__name__}' object",
-                            name=attr,
-                            obj=self)
+                    if id(type_instance) in cls._type_attr_dict:
+                        private_attr_name = need_call(id(type_instance), attr)
+                        attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
+                        if hasattr(attribute, "__delete__"):
+                            attribute.__delete__(self)
+                            return
+                    private_attr_name = need_call(id(self), attr)
+                    try:
+                        del obj_attr_dict[id(self)][private_attr_name]
+                    except KeyError:
+                        raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
+                                            name=attr,
+                                            obj=self) from None
                 elif cls._hash_private_attribute(attr) in history_private_attrs:
                     if not is_class_frame(frame):
                         raise AttributeError(
                             f"cannot delete private attribute '{attr}' on '{type_instance.__name__}' object",
                             name=attr,
                             obj=self)
-                    if caller_self is not None and isinstance(caller_self, type_instance):
-                        for all_subtype in type_instance.__mro__[1:]:
+                    for all_subtype in type_instance.__mro__[1:]:
+                        if hasattr(all_subtype, "__delattr__") and isinstance(all_subtype, PrivateAttrType):
                             try:
-                                if hasattr(all_subtype, "__delattr__") and isinstance(all_subtype, PrivateAttrType):
-                                    all_subtype.__delattr__(self, attr)
-                                    break
+                                all_subtype.__delattr__(self, attr)
+                                break
                             except AttributeError:
-                                continue
-                    else:
-                        raise AttributeError(
-                            f"cannot delete private attribute '{attr}' on '{type_instance.__name__}' object",
-                            name=attr,
-                            obj=self)
+                                pass
                 elif original_delattr:
                     original_delattr(self, attr)
                 else:
@@ -557,7 +533,6 @@ class PrivateAttrType(type):
                             break
             finally:
                 del frame
-                del caller_self
 
         def __del__(self):
             if _clear_obj:
@@ -681,9 +656,6 @@ class PrivateAttrType(type):
         frame = inspect.currentframe()
         frame = frame.f_back
         try:
-            caller_locals = frame.f_locals
-            caller_cls: type|None = caller_locals.get("cls", None)
-            del caller_locals
             if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
                 hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
                     PrivateAttrType._type_attr_dict[id(cls)][
@@ -692,25 +664,20 @@ class PrivateAttrType(type):
                     raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                             name=attr,
                                             obj=cls)
-                if caller_cls is not None and issubclass(caller_cls, cls):
-                    private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
-                    try:
-                        result = PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
-                    except KeyError:
-                        raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
-                                            name=attr,
-                                            obj=cls) from None
-                    else:
-                        if hasattr(result, "__get__"):
-                            res = result.__get__(None, cls)
-                            return res
-                        else:
-                            return result
-                else:
+                private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
+                try:
+                    result = PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
+                except KeyError:
                     raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                         name=attr,
-                                        obj=cls)
-            elif caller_cls is not None and issubclass(caller_cls, cls) and PrivateAttrType._is_class_code(cls, frame):
+                                        obj=cls) from None
+                else:
+                    if hasattr(result, "__get__"):
+                        res = result.__get__(None, cls)
+                        return res
+                    else:
+                        return result
+            else:
                 for icls in cls.__mro__[1:]:
                     if id(icls) in PrivateAttrType._type_attr_dict:
                         if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
@@ -727,7 +694,6 @@ class PrivateAttrType(type):
                                 obj=cls)
         finally:
             del frame
-            del caller_cls
 
     def __setattr__(cls, attr, value):
         invalid_names = [
@@ -746,9 +712,6 @@ class PrivateAttrType(type):
         frame = inspect.currentframe()
         frame = frame.f_back
         try:
-            caller_locals = frame.f_locals
-            caller_cls: type|None = caller_locals.get("cls", None)
-            del caller_locals
             if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
                 hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
                     PrivateAttrType._type_attr_dict[id(cls)][
@@ -757,15 +720,10 @@ class PrivateAttrType(type):
                     raise AttributeError(f"cannot set private attribute '{attr}' to class '{cls.__name__}'",
                                         name=attr,
                                         obj=cls)
-                if caller_cls is not None and issubclass(caller_cls, cls):
-                    private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
-                    PrivateAttrType._type_attr_dict[id(cls)][private_attr_name] = value
-                    _resortkey(PrivateAttrType._type_attr_dict[id(cls)])
-                else:
-                    raise AttributeError(f"cannot set private attribute '{attr}' to class '{cls.__name__}'",
-                                        name=attr,
-                                        obj=cls)
-            elif PrivateAttrType._is_class_code(cls, frame) and caller_cls is not None and issubclass(caller_cls, cls):
+                private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
+                PrivateAttrType._type_attr_dict[id(cls)][private_attr_name] = value
+                _resortkey(PrivateAttrType._type_attr_dict[id(cls)])
+            else:
                 for icls in cls.__mro__[1:]:
                     if id(icls) in PrivateAttrType._type_attr_dict:
                         if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
@@ -778,7 +736,6 @@ class PrivateAttrType(type):
                     type.__setattr__(cls, attr, value)
         finally:
             del frame
-            del caller_cls
 
     def __delattr__(cls, attr):
         invalid_names = [
@@ -797,9 +754,6 @@ class PrivateAttrType(type):
         frame = inspect.currentframe()
         frame = frame.f_back
         try:
-            caller_locals = frame.f_locals
-            caller_cls: type|None = caller_locals.get("cls", None)
-            del caller_locals
             if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
                 hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
                     PrivateAttrType._type_attr_dict[id(cls)][PrivateAttrType._type_need_call[
@@ -808,19 +762,14 @@ class PrivateAttrType(type):
                     raise AttributeError(f"cannot delete private attribute '{attr}' on class '{cls.__name__}'",
                                         name=attr,
                                         obj=cls)
-                if caller_cls is not None and issubclass(caller_cls, cls):
-                    private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
-                    try:
-                        del PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
-                    except KeyError:
-                        raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
-                                            name=attr,
-                                            obj=cls) from None
-                else:
-                    raise AttributeError(f"cannot delete private attribute '{attr}' on class '{cls.__name__}'",
+                private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
+                try:
+                    del PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
+                except KeyError:
+                    raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                         name=attr,
-                                        obj=cls)
-            elif PrivateAttrType._is_class_code(cls, frame) and caller_cls is not None and issubclass(caller_cls, cls):
+                                        obj=cls) from None
+            else:
                 for icls in cls.__mro__[1:]:
                     if id(icls) in PrivateAttrType._type_attr_dict:
                         if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
@@ -831,11 +780,8 @@ class PrivateAttrType(type):
                             return
                 else:
                     type.__delattr__(cls, attr)
-            else:
-                type.__delattr__(cls, attr)
         finally:
             del frame
-            del caller_cls
 
     def __del__(cls):
         if callable(_clear_obj):
