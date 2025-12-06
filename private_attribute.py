@@ -94,14 +94,20 @@ _clear_obj = _generate_private_attr_cache("clean")
 
 def _register_local_code():
     _all_id_code_in_code: dict[int, list[CodeType]] = {}
+    _all_code_used_by_function: dict[int, list[int]] = {}
 
     class DelControl:
-        def __init__(self, obj_id: int):
+        def __init__(self, obj_id: int, func_id: int):
             self.obj_id = obj_id
+            self.func_id = func_id
 
         def __del__(self):
             try:
-                del _all_id_code_in_code[self.obj_id]
+                if self.func_id in _all_code_used_by_function.get(self.obj_id, []):
+                    _all_code_used_by_function[self.obj_id].remove(self.func_id)
+                if not _all_code_used_by_function[self.obj_id]:
+                    del _all_code_used_by_function[self.obj_id]
+                    del _all_id_code_in_code[self.obj_id]
             except KeyError:
                 pass
 
@@ -128,8 +134,12 @@ def _register_local_code():
                     raise RuntimeError(f"Cannot register code: It has attr {final_attr_name}")
             if id(code) in _all_id_code_in_code:
                 for i in func_code:
-                    setattr(i, final_attr_name, DelControl(id(i)))
+                    setattr(i, final_attr_name, DelControl(id(i.__code__), id(i)))
                     _all_id_code_in_code[id(i.__code__)] = _all_id_code_in_code[id(code)].copy()
+                    if id(i.__code__) not in _all_code_used_by_function:
+                        _all_code_used_by_function[id(i.__code__)] = [id(i)]
+                    elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
+                        _all_code_used_by_function[id(i.__code__)].append(id(i))
                 return decorator(final_func)
             all_code = []
             for i in typ.__mro__:
@@ -138,11 +148,15 @@ def _register_local_code():
             if code not in all_code:
                 raise RuntimeError("Cannot register code: the last code is illegal")
             for i in func_code:
-                setattr(i, final_attr_name, DelControl(id(i.__code__)))
+                setattr(i, final_attr_name, DelControl(id(i.__code__), id(i)))
                 if id(i.__code__) not in _all_id_code_in_code:
                     _all_id_code_in_code[id(i.__code__)] = []
                 if code not in _all_id_code_in_code[id(i.__code__)]:
                     _all_id_code_in_code[id(i.__code__)].append(code)
+                if id(i.__code__) not in _all_code_used_by_function:
+                    _all_code_used_by_function[id(i.__code__)] = [id(i)]
+                elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
+                    _all_code_used_by_function[id(i.__code__)].append(id(i))
             return decorator(final_func)
 
         return wrapper
@@ -159,9 +173,8 @@ def _register_local_code():
                 all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
         def wrapper(func):
             code = func.__code__
-            for i in _all_id_code_in_code:
-                if code in _all_id_code_in_code[i]:
-                    _all_id_code_in_code[i].remove(code)
+            _all_id_code_in_code[id(code)] = [i for i in _all_id_code_in_code[id(code)] if i not in all_code]
+            _all_code_used_by_function[id(code)] = [i for i in _all_code_used_by_function[id(code)] if i != id(func)]
             return func
         return wrapper
 
