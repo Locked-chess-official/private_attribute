@@ -8,7 +8,7 @@ This package provide a way to create the private attribute like "C++" does.
 
 ```python
 from private_attribute import (PrivateAttrBase, PrivateWrapProxy
-                               register_to_type)                   # 1 Import public API
+                        register_to_type, unregister_to_type)      # 1 Import public API
 
 def my_generate_func(obj_id, attr_name):                           # 2 Optional: custom name generator
     return f"_hidden_{obj_id}_{attr_name}"
@@ -35,6 +35,7 @@ class MyClass(PrivateAttrBase, private_func=my_generate_func):     # 3 Inherit +
         def inner(...):
             return some_implementation(self.a, self.b, self.c, x)
         inner(...)
+        unregister_to_type(type(self))(inner)                      # 9 Unregister from from type
         return heavy_computation(self.a, self.b, self.c, x)
 
     @expensive_api_call.non_conflict_attr_name1                    # 6 Easy access to internal names
@@ -68,7 +69,8 @@ print(obj.expensive_api_call(10))   # works with all decorators applied
 | 5 | @PrivateWrapProxy(...) | Make any decorator compatible with private attributes | When needed |
 | 6 | method.xxx | Normal api name proxy | Based on its api |
 | 7 | method.result.xxx chain + dummy wrap | Fix decorator order and name conflicts | When needed |
-| 8 | @register_to_type(type, [decorator, attrname]) | Register decorator to type (most use `type(self)` or `cls`) | When needed |
+| 8 | @register_to_type(type, [decorator, attrname]) | Register function to type (most use `type(self)` or `cls`) | When needed |
+| 9 | unregister_to_type(type)(func) | Unregister function from type | When needed |
 
 ## Usage
 
