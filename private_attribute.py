@@ -177,10 +177,16 @@ def _register_local_code():
             if id(i) in PrivateAttrType._type_allowed_code:
                 all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
         def wrapper(func):
-            code = func.__code__
-            with _all_code_lock:
-                if id(code) in _all_id_code_in_code:
-                    _all_id_code_in_code[id(code)] = [i for i in _all_id_code_in_code[id(code)] if i not in all_code]
+            if isinstance(func, _PrivateWrap):
+                func_list = func._func_list
+            else:
+                func_list = [func]
+            for i in func_list:
+                code = i.__code__
+                with _all_code_lock:
+                    if id(code) in _all_id_code_in_code:
+                        _all_id_code_in_code[id(code)] = [
+                            j for j in _all_id_code_in_code[id(code)] if j not in all_code]
             return func
         return wrapper
 
@@ -237,6 +243,7 @@ class PrivateAttrType(type):
     _type_attr_dict = {}
     _type_allowed_code = {}
     _type_need_call = {}
+    _type_lock = {}
 
     @classmethod
     def _hash_private_attribute(cls, name: str) -> tuple[str]:
@@ -430,13 +437,15 @@ class PrivateAttrType(type):
                     except KeyError:
                         private_attr_name = need_call(id(type_instance), attr)
                         try:
-                            return obj_attr_dict[id(self)][private_attr_name]
+                            with type_lock:
+                                return obj_attr_dict[id(self)][private_attr_name]
                         except KeyError:
                             try:
-                                if id(type_instance) in cls._type_attr_dict:
-                                    attribute = cls._type_attr_dict[id(type_instance)][private_attr_name]
-                                else:
-                                    raise KeyError(id(type_instance))
+                                with type_lock:
+                                    if id(type_instance) in cls._type_attr_dict:
+                                        attribute = cls._type_attr_dict[id(type_instance)][private_attr_name]
+                                    else:
+                                        raise KeyError(id(type_instance))
                             except KeyError:
                                 raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
                                                     name=attr,
@@ -486,15 +495,16 @@ class PrivateAttrType(type):
                         raise AttributeError(f"cannot set private attribute '{attr}' to '{type_instance.__name__}' object",
                                             name=attr,
                                             obj=self)
-                    if id(type_instance) in cls._type_attr_dict:
-                        private_attr_name = need_call(id(type_instance), attr)
-                        attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
-                        if hasattr(attribute, "__set__"):
-                            attribute.__set__(self, value)
-                            return
-                    private_attr_name = need_call(id(self), attr)
-                    obj_attr_dict[id(self)][private_attr_name] = value
-                    _resortkey(obj_attr_dict[id(self)])
+                    with type_lock:
+                        if id(type_instance) in cls._type_attr_dict:
+                            private_attr_name = need_call(id(type_instance), attr)
+                            attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
+                            if hasattr(attribute, "__set__"):
+                                attribute.__set__(self, value)
+                                return
+                        private_attr_name = need_call(id(self), attr)
+                        obj_attr_dict[id(self)][private_attr_name] = value
+                        _resortkey(obj_attr_dict[id(self)])
                 elif cls._hash_private_attribute(attr) in history_private_attrs:
                     if not is_class_frame(frame):
                         raise AttributeError(f"cannot set private attribute '{attr}' to '{type_instance.__name__}' object",
@@ -526,19 +536,20 @@ class PrivateAttrType(type):
                             f"cannot delete private attribute '{attr}' on '{type_instance.__name__}' object",
                             name=attr,
                             obj=self)
-                    if id(type_instance) in cls._type_attr_dict:
-                        private_attr_name = need_call(id(type_instance), attr)
-                        attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
-                        if hasattr(attribute, "__delete__"):
-                            attribute.__delete__(self)
-                            return
-                    private_attr_name = need_call(id(self), attr)
-                    try:
-                        del obj_attr_dict[id(self)][private_attr_name]
-                    except KeyError:
-                        raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
-                                            name=attr,
-                                            obj=self) from None
+                    with type_lock:
+                        if id(type_instance) in cls._type_attr_dict:
+                            private_attr_name = need_call(id(type_instance), attr)
+                            attribute = cls._type_attr_dict[id(type_instance)].get(private_attr_name, None)
+                            if hasattr(attribute, "__delete__"):
+                                attribute.__delete__(self)
+                                return
+                        private_attr_name = need_call(id(self), attr)
+                        try:
+                            del obj_attr_dict[id(self)][private_attr_name]
+                        except KeyError:
+                            raise AttributeError(f"'{type_instance.__name__}' object has no attribute '{attr}'",
+                                                name=attr,
+                                                obj=self) from None
                 elif cls._hash_private_attribute(attr) in history_private_attrs:
                     if not is_class_frame(frame):
                         raise AttributeError(
@@ -613,6 +624,8 @@ class PrivateAttrType(type):
             if hasattr(value_i, "__set_name__"):
                 value_i.__set_name__(type_instance, new_attr)
         _resortkey(type_attr_dict[id(type_instance)])
+        type_lock = threading.Lock()
+        cls._type_lock[id(type_instance)] = type_lock
         return type_instance
 
 
@@ -683,6 +696,7 @@ class PrivateAttrType(type):
     def __getattr__(cls, attr):
         frame = inspect.currentframe()
         frame = frame.f_back
+        type_lock = PrivateAttrType._type_lock[id(cls)]
         try:
             if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
                 hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
@@ -694,7 +708,8 @@ class PrivateAttrType(type):
                                             obj=cls)
                 private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
                 try:
-                    result = PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
+                    with type_lock:
+                        result = PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
                 except KeyError:
                     raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                         name=attr,
@@ -739,6 +754,7 @@ class PrivateAttrType(type):
             raise AttributeError(f"cannot set '{attr}' attribute on class '{cls.__name__}'")
         frame = inspect.currentframe()
         frame = frame.f_back
+        type_lock = PrivateAttrType._type_lock[id(cls)]
         try:
             if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
                 hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
@@ -748,9 +764,10 @@ class PrivateAttrType(type):
                     raise AttributeError(f"cannot set private attribute '{attr}' to class '{cls.__name__}'",
                                         name=attr,
                                         obj=cls)
-                private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
-                PrivateAttrType._type_attr_dict[id(cls)][private_attr_name] = value
-                _resortkey(PrivateAttrType._type_attr_dict[id(cls)])
+                with type_lock:
+                    private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
+                    PrivateAttrType._type_attr_dict[id(cls)][private_attr_name] = value
+                    _resortkey(PrivateAttrType._type_attr_dict[id(cls)])
             else:
                 for icls in cls.__mro__[1:]:
                     if id(icls) in PrivateAttrType._type_attr_dict:
@@ -781,6 +798,7 @@ class PrivateAttrType(type):
             raise AttributeError(f"cannot delete '{attr}' attribute on class '{cls.__name__}'")
         frame = inspect.currentframe()
         frame = frame.f_back
+        type_lock = PrivateAttrType._type_lock[id(cls)]
         try:
             if (hashlib.sha256(attr.encode("utf-8")).hexdigest(),
                 hashlib.sha256(f"{id(cls)}_{attr}".encode("utf-8")).hexdigest()) in \
@@ -792,7 +810,8 @@ class PrivateAttrType(type):
                                         obj=cls)
                 private_attr_name = PrivateAttrType._type_need_call[id(cls)](id(cls), attr)
                 try:
-                    del PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
+                    with type_lock:
+                        del PrivateAttrType._type_attr_dict[id(cls)][private_attr_name]
                 except KeyError:
                     raise AttributeError(f"'{cls.__name__}' class has no attribute '{attr}'",
                                         name=attr,
