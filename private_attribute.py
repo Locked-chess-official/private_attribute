@@ -28,6 +28,7 @@ import string
 import threading
 import time
 import functools
+import warnings
 
 _running_time = time.time()
 
@@ -97,102 +98,17 @@ def _register_local_code():
     _all_code_used_by_function: dict[int, list[int]] = {}
     _all_code_lock = threading.Lock()
 
-    class DelControl:
-        def __init__(self, obj_id: int, func_id: int):
-            self.obj_id = obj_id
-            self.func_id = func_id
-
-        def __del__(self):
-            try:
-                with _all_code_lock:
-                    if self.func_id in _all_code_used_by_function.get(self.obj_id, []):
-                        _all_code_used_by_function[self.obj_id].remove(self.func_id)
-                    if not _all_code_used_by_function[self.obj_id]:
-                        del _all_code_used_by_function[self.obj_id]
-                        del _all_id_code_in_code[self.obj_id]
-            except KeyError, ValueError:
-                pass
-
     def _register(typ: PrivateAttrType, decorator=lambda _: _, final_attr_name="_private_register"):
-        if not isinstance(typ, PrivateAttrType):
-            raise TypeError("typ must be a subclass of PrivateAttrType")
-        frame = inspect.currentframe().f_back
-        if not frame:
-            raise RuntimeError("Cannot find frame")
-        if frame.f_code.co_name == "<module>":
-            raise RuntimeError("Cannot register code: the last code is illegal")
-        code = frame.f_code
-        del frame
-
-        def wrapper(func):
-            if isinstance(func, _PrivateWrap):
-                final_func = func.result
-                func_code = func._func_list
-            else:
-                final_func = func
-                func_code = [func]
-            for i in func_code:
-                if hasattr(i, final_attr_name):
-                    raise RuntimeError(f"Cannot register code: It has attr {final_attr_name}")
-            if id(code) in _all_id_code_in_code:
-                for i in func_code:
-                    setattr(i, final_attr_name, DelControl(id(i.__code__), id(i)))
-                    with _all_code_lock:
-                        _all_id_code_in_code[id(i.__code__)] = _all_id_code_in_code[id(code)].copy()
-                        if id(i.__code__) not in _all_code_used_by_function:
-                            _all_code_used_by_function[id(i.__code__)] = [id(i)]
-                        elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
-                            _all_code_used_by_function[id(i.__code__)].append(id(i))
-                return decorator(final_func)
-            all_code = []
-            for i in typ.__mro__:
-                if id(i) in PrivateAttrType._type_allowed_code:
-                    all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
-            if code not in all_code:
-                raise RuntimeError("Cannot register code: the last code is illegal")
-            for i in func_code:
-                setattr(i, final_attr_name, DelControl(id(i.__code__), id(i)))
-                with _all_code_lock:
-                    if id(i.__code__) not in _all_id_code_in_code:
-                        _all_id_code_in_code[id(i.__code__)] = []
-                    if code not in _all_id_code_in_code[id(i.__code__)]:
-                        _all_id_code_in_code[id(i.__code__)].append(code)
-                    if id(i.__code__) not in _all_code_used_by_function:
-                        _all_code_used_by_function[id(i.__code__)] = [id(i)]
-                    elif id(i) not in _all_code_used_by_function[id(i.__code__)]:
-                        _all_code_used_by_function[id(i.__code__)].append(id(i))
-            return decorator(final_func)
-
-        return wrapper
-
-    def _check(code):
-        with _all_code_lock:
-            return tuple(_all_id_code_in_code.get(id(code), []))
+        warnings.warn("'register_to_type' should not be called in future version", DeprecationWarning, stacklevel=2)
+        return lambda _: _
 
     def _unregister(typ):
-        if not isinstance(typ, PrivateAttrType):
-            raise TypeError("typ must be a subclass of PrivateAttrType")
-        all_code = []
-        for i in typ.__mro__:
-            if id(i) in PrivateAttrType._type_allowed_code:
-                all_code.extend(PrivateAttrType._type_allowed_code[id(i)])
-        def wrapper(func):
-            if isinstance(func, _PrivateWrap):
-                func_list = func._func_list
-            else:
-                func_list = [func]
-            for i in func_list:
-                code = i.__code__
-                with _all_code_lock:
-                    if id(code) in _all_id_code_in_code:
-                        _all_id_code_in_code[id(code)] = [
-                            j for j in _all_id_code_in_code[id(code)] if j not in all_code]
-            return func
-        return wrapper
+        warnings.warn("'unregister_to_type' should not be called in future version", DeprecationWarning, stacklevel=2)
+        return lambda _: _
 
-    return _register, _check, _unregister
+    return _register, _unregister
 
-register_to_type, _check, unregister_to_type = _register_local_code()
+register_to_type, unregister_to_type = _register_local_code()
 
 def _get_all_possible_code(obj):
     if not hasattr(obj, "__get__") and not hasattr(obj, "__call__"):
@@ -343,10 +259,6 @@ class PrivateAttrType(type):
         def is_class_frame(frame: FrameType):
             if frame is None:
                 return False
-            if frame.f_code.co_name == "<module>":
-                return False
-            elif frame.f_code.co_name in ('<genexpr>', '<listcomp>', '<setcomp>', '<dictcomp>'):
-                return is_class_frame(frame.f_back)
             code_list = list(type_allowed_code[id(type_instance)])
             for i in type_instance.__mro__[1:]:
                 if isinstance(i, cls):
@@ -358,44 +270,7 @@ class PrivateAttrType(type):
                 __delattr__.__code__,
                 __del__.__code__,
             ]
-            if frame.f_code in code_list:
-                return True
-            register_code = _check(frame.f_code)
-            if register_code:
-                for i in register_code:
-                    if i in code_list:
-                        return True
-            module = inspect.getmodule(frame)
-            clsmodule = inspect.getmodule(cls)
-            if module is clsmodule:
-                if frame.f_code.co_qualname in (
-                    __getattribute__.__code__.co_qualname,
-                    __getattr__.__code__.co_qualname,
-                    __setattr__.__code__.co_qualname,
-                    __delattr__.__code__.co_qualname,
-                    __del__.__code__.co_qualname,
-                ):
-                    return True
-            all_possible_local = []
-            for i in code_list:
-                if not hasattr(i, "co_qualname"):
-                    continue
-                if frame.f_code.co_qualname.startswith(i.co_qualname):
-                    all_possible_local.append(i)
-            if not all_possible_local:
-                return False
-            while frame:
-                frame = frame.f_back
-                if frame is None:
-                    return False
-                if frame.f_code in all_possible_local:
-                    return True
-                for i in all_possible_local:
-                    if frame.f_code.co_qualname.startswith(i.co_qualname):
-                        break
-                else:
-                    return False
-            return False
+            return frame.f_code in code_list
 
         def __getattribute__(self, attr):
             if cls._hash_private_attribute(attr) in hash_private_list or \
@@ -632,10 +507,6 @@ class PrivateAttrType(type):
     def _is_class_code(cls, frame: FrameType):
         if frame is None:
             return False
-        if frame.f_code.co_name == "<module>":
-            return False
-        elif frame.f_code.co_name in ('<genexpr>', '<listcomp>', '<setcomp>', '<dictcomp>'):
-            return PrivateAttrType._is_class_code(cls, frame.f_back)
         all_possible_local = []
         code_list = PrivateAttrType._type_allowed_code.get(id(cls), ())
         for i in code_list:
@@ -647,32 +518,7 @@ class PrivateAttrType(type):
             getattr(PrivateAttrType, i).__code__ for i in 
             ("__getattribute__", "__getattr__", "__setattr__", "__delattr__", "__del__")
         )
-        if frame.f_code in code_list:
-            return True
-        for icls in cls.__mro__[1:]:
-            code_list = PrivateAttrType._type_allowed_code.get(id(icls), ())
-            for i in code_list:
-                if not hasattr(i, "co_qualname"):
-                    continue
-                if frame.f_code.co_qualname.startswith(i.co_qualname):
-                    all_possible_local.append(i)
-            if frame.f_code in code_list:
-                return True
-        if not all_possible_local:
-            return False
-        while frame:
-            frame = frame.f_back
-            if frame is None:
-                return False
-            if frame.f_code in all_possible_local:
-                return True
-            for i in all_possible_local:
-                if frame.f_code.co_qualname.startswith(i.co_qualname):
-                    break
-            else:
-                return False
-        return False
-
+        return frame.f_code in code_list
 
     def __getattribute__(cls, attr):
         try:

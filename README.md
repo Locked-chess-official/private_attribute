@@ -7,8 +7,7 @@ This package provide a way to create the private attribute like "C++" does.
 ## All API
 
 ```python
-from private_attribute import (PrivateAttrBase, PrivateWrapProxy
-                        register_to_type, unregister_to_type)      # 1 Import public API
+from private_attribute import (PrivateAttrBase, PrivateWrapProxy)      # 1 Import public API
 
 def my_generate_func(obj_id, attr_name):                           # 2 Optional: custom name generator
     return f"_hidden_{obj_id}_{attr_name}"
@@ -31,11 +30,9 @@ class MyClass(PrivateAttrBase, private_func=my_generate_func):     # 3 Inherit +
     @PrivateWrapProxy(login_required())                            # 5 Stack as many as needed
     @PrivateWrapProxy(rate_limit(calls=10))                        # 5
     def expensive_api_call(self, x):                               # First definition (will be wrapped)
-        @register_to_type(type(self), some_decorator)              # 8 Register decorator to type
         def inner(...):
             return some_implementation(self.a, self.b, self.c, x)
         inner(...)
-        unregister_to_type(type(self))(inner)                      # 9 Unregister from from type
         return heavy_computation(self.a, self.b, self.c, x)
 
     @expensive_api_call.non_conflict_attr_name1                    # 6 Easy access to internal names
@@ -59,7 +56,7 @@ print(hasattr(obj, 'a'))            # False – truly hidden from outside
 print(obj.expensive_api_call(10))   # works with all decorators applied
 ```
 
-| # | API| Purpose | Required? |
+| # | API | Purpose | Required? |
 |---|----------------------------------------|-------------------------------------------------------|-----------|
 | 1 | PrivateAttrBase | Base class – must inherit | Yes |
 | 1 | PrivateWrapProxy  | Decorator wrapper for arbitrary decorators  | When needed |
@@ -69,8 +66,6 @@ print(obj.expensive_api_call(10))   # works with all decorators applied
 | 5 | @PrivateWrapProxy(...) | Make any decorator compatible with private attributes | When needed |
 | 6 | method.xxx | Normal api name proxy | Based on its api |
 | 7 | method.result.xxx chain + dummy wrap | Fix decorator order and name conflicts | When needed |
-| 8 | @register_to_type(type, [decorator, attrname]) | Register function to type (most use `type(self)` or `cls`) | When needed |
-| 9 | unregister_to_type(type)(func) | Unregister function from type | When needed |
 
 ## Usage
 
@@ -182,57 +177,6 @@ class MyClass(PrivateAttrBase):
 
     @PrivateWrapProxy(decorator3())
     def method2(self):
-```
-
-For inner function, its code is defaultly be added to the code list, and you can also use the `register_to_type` to register the decorator to the type.
-Here is the definition:
-
-```python
-def register_to_type(typ, decorator=lambda _: _, attrname="_private_register"):
-```
-
-then the code will be bound to the outer method:
-
-```python
-from private_attribute import PrivateAttrBase, PrivateWrapProxy, register_to_type
-
-class MyClass(PrivateAttrBase):
-    __private_attrs__ = ['a', 'b', 'c']
-    @PrivateWrapProxy(decorator1())
-    @PrivateWrapProxy(decorator2())
-    def method1(self):
-        ...
-
-        @register_to_type(type(self), decorator1())
-        def method1():
-            ...
-
-            @register_to_type(type(self), decorator2(), attrname)
-            def method1():
-                ...
-
-    @PrivateWrapProxy(decorator3())
-    def method2(self):
-        ...
-```
-
-The decorator and attrname are optional.It defaults "_private_register" .If the attrname has conflict with the decorator, you can change.
-
-`register_to_type` cannot use outside the class.
-
-The "attr_name" will be set as an attribute of the function object. You can change it by "attr_name=...". It will set a `DelControl` object to the function object, and when the function is deleted, the object's `__del__` will clean the register of the function code.
-
-In fact, you can use the `register_to_type` to register the function outside in the class method. If the outer function was decorated, you need to use `PrivateWrapProxy` to decorate it.
-
-To unregister the function, you can use the `unregister_to_type`.
-The definition is:
-
-```python
-def unregister_to_type(typ):
-    def wrapper(func):
-        ...
-        return func
-    return wrapper
 ```
 
 ## Notes
